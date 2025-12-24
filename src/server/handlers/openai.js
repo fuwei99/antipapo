@@ -128,6 +128,9 @@ export const handleOpenAIRequest = async (req, res) => {
                   writeStreamData(res, createStreamChunk(id, created, model, delta));
                 } else {
                   const delta = { content: data.content };
+                  if (data.thoughtSignature && config.passSignatureToClient) {
+                    delta.thoughtSignature = data.thoughtSignature;
+                  }
                   writeStreamData(res, createStreamChunk(id, created, model, delta));
                 }
               }, 0, model);

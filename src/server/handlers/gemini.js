@@ -223,7 +223,7 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
                 writeStreamData(res, chunk);
               } else {
                 // 普通文本
-                const chunk = createGeminiResponse(data.content, null, null, null, null, null);
+                const chunk = createGeminiResponse(data.content, null, data.thoughtSignature || null, null, null, null);
                 writeStreamData(res, chunk);
               }
             }, 0, modelName);

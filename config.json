@@ -39,7 +39,7 @@
     "skipProjectIdFetch": true,
     "useNativeAxios": false,
     "useContextSystemPrompt": false,
-    "passSignatureToClient": false
+    "passSignatureToClient": true
   },
   "r2": {
     "enabled": true,
