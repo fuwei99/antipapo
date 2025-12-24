@@ -164,7 +164,7 @@ async function handleApiError(error, token) {
 
 // ==================== 导出函数 ====================
 
-export async function generateAssistantResponse(requestBody, token, callback) {
+export async function generateAssistantResponse(requestBody, token, callback, retryCount = 0, originalModelName = '') {
 
   const headers = buildHeaders(token);
   // 在 state 中临时缓存思维链签名，供流式多片段复用，并携带 session 与 model 信息以写入全局缓存
@@ -175,11 +175,39 @@ export async function generateAssistantResponse(requestBody, token, callback) {
     model: requestBody.model
   };
   const lineBuffer = getLineBuffer(); // 从对象池获取
+  const uploadPromises = [];
+  let signatureUploaded = false;
+
+  const modelToCheck = originalModelName || requestBody.model;
+  const shouldUploadSig = modelToCheck && (modelToCheck.includes('image') || modelToCheck.endsWith('-sig'));
 
   const processChunk = (chunk) => {
     const lines = lineBuffer.append(chunk);
     for (let i = 0; i < lines.length; i++) {
       parseAndEmitStreamChunk(lines[i], state, (data) => {
+        // 1. 处理签名上传 (如果存在，且未上传过，且符合条件)
+        if (data.thoughtSignature && !signatureUploaded && r2Uploader.isEnabled() && shouldUploadSig) {
+          signatureUploaded = true;
+          console.log(`[DEBUG] ${new Date().toISOString()} stream 检测到思维签名，准备异步上传...`);
+          const filename = `sig_${Date.now()}_${Math.random().toString(36).substring(2)}.txt`;
+
+          const uploadPromise = r2Uploader.uploadText(data.thoughtSignature, filename)
+            .then(sigUrl => {
+              if (sigUrl) {
+                console.log(`[DEBUG] ${new Date().toISOString()} stream 思维签名上传成功: ${sigUrl}`);
+                // 发送隐藏的 Markdown 注释
+                callback({
+                  type: 'content', // 使用 content 类型或者专门的类型，取决于 handler
+                  content: `\n\n[](SIG_URL:${sigUrl})`
+                });
+              }
+            })
+            .catch(err => {
+              console.error(`[ERROR] ${new Date().toISOString()} stream 思维签名上传失败: ${err.message}`);
+            });
+          uploadPromises.push(uploadPromise);
+        }
+
         if (data.type === 'image_data') {
           // Upload image asynchronously
           const uploadPromise = (async () => {
@@ -221,7 +249,11 @@ export async function generateAssistantResponse(requestBody, token, callback) {
       });
 
       await new Promise((resolve, reject) => {
-        response.data.on('end', () => {
+        response.data.on('end', async () => {
+          // 等待所有异步上传完成
+          if (uploadPromises.length > 0) {
+            await Promise.all(uploadPromises);
+          }
           releaseLineBuffer(lineBuffer); // 归还到对象池
           resolve();
         });
@@ -242,7 +274,11 @@ export async function generateAssistantResponse(requestBody, token, callback) {
               processChunk(chunk);
             }
           })
-          .onEnd(() => {
+          .onEnd(async () => {
+            // 等待所有异步上传完成
+            if (uploadPromises.length > 0) {
+              await Promise.all(uploadPromises);
+            }
             releaseLineBuffer(lineBuffer); // 归还到对象池
             if (statusCode !== 200) {
               reject({ status: statusCode, message: errorBody });
@@ -364,7 +400,7 @@ export async function getModelsWithQuotas(token) {
   return quotas;
 }
 
-export async function generateAssistantResponseNoStream(requestBody, token) {
+export async function generateAssistantResponseNoStream(requestBody, token, originalModelName = '') {
 
   const headers = buildHeaders(token);
   let data;
@@ -449,13 +485,14 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
     return imageUrl;
   });
 
+
   // 2. 签名上传任务 (如果存在且需要上传)
   let signatureUploadTask = Promise.resolve(null);
-  // 只在有 Image 且有 Signature 时上传签名 (模仿原有逻辑: if resolvedImageUrls.length > 0)
-  // 或者更积极一点: 只要有 Signature 就上传? 原逻辑是 "生图模型" 才上传
-  // 原逻辑: if (imageUrls.length > 0) { if (signature) ... }
-  // 我们可以在这里判断 imageUrls.length > 0
-  if (imageUrls.length > 0 && reasoningSignature && r2Uploader.isEnabled()) {
+
+  const modelToCheck = originalModelName || requestBody.model;
+  const shouldUploadSig = modelToCheck && (modelToCheck.includes('image') || modelToCheck.endsWith('-sig'));
+
+  if (imageUrls.length > 0 && reasoningSignature && r2Uploader.isEnabled() && shouldUploadSig) {
     console.log(`[DEBUG] ${new Date().toISOString()} 检测到思维签名，长度: ${reasoningSignature.length}，准备并行上传...`);
     const filename = `sig_${Date.now()}_${Math.random().toString(36).substring(2)}.txt`;
     signatureUploadTask = r2Uploader.uploadText(reasoningSignature, filename)

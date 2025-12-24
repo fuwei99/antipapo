@@ -217,12 +217,16 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
                 // Gemini 工具调用
                 const chunk = createGeminiResponse(null, null, null, data.tool_calls, null, null);
                 writeStreamData(res, chunk);
+              } else if (data.type === 'content') {
+                // client.js 可能会发回特殊 content (如 SIG_URL)
+                const chunk = createGeminiResponse(data.content, null, null, null, null, null);
+                writeStreamData(res, chunk);
               } else {
                 // 普通文本
                 const chunk = createGeminiResponse(data.content, null, null, null, null, null);
                 writeStreamData(res, chunk);
               }
-            });
+            }, 0, modelName);
           },
           safeRetries,
           'gemini.stream ',
@@ -256,7 +260,7 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
           const token = await tokenManager.getToken();
           if (!token) throw new Error('没有可用的token');
           const body = await generateGeminiRequestBody(req.body, modelName, token);
-          return generateAssistantResponseNoStream(body, token);
+          return generateAssistantResponseNoStream(body, token, modelName);
         },
         safeRetries,
         'gemini.no_stream ',

@@ -79,7 +79,7 @@ export const handleOpenAIRequest = async (req, res) => {
               const body = await generateRequestBody(messages, model, params, tools, token);
               prepareImageRequest(body);
 
-              return generateAssistantResponseNoStream(body, token);
+              return generateAssistantResponseNoStream(body, token, model);
             },
             safeRetries,
             'chat.stream.image ',
@@ -130,7 +130,7 @@ export const handleOpenAIRequest = async (req, res) => {
                   const delta = { content: data.content };
                   writeStreamData(res, createStreamChunk(id, created, model, delta));
                 }
-              });
+              }, 0, model);
             },
             safeRetries,
             'chat.stream ',
@@ -157,7 +157,7 @@ export const handleOpenAIRequest = async (req, res) => {
           if (!token) throw new Error('没有可用的token');
 
           const body = await generateRequestBody(messages, model, params, tools, token);
-          return generateAssistantResponseNoStream(body, token);
+          return generateAssistantResponseNoStream(body, token, model);
         },
         safeRetries,
         'chat.no_stream ',

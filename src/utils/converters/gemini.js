@@ -114,10 +114,12 @@ function processModelThoughts(content, reasoningSignature, toolSignature) {
 
 
 // 递归处理 Gemini 格式内容，支持下载图片和签名
-async function processGeminiContentAsync(requestContents, enableThinking, actualModelName, sessionId) {
+async function processGeminiContentAsync(requestContents, enableThinking, actualModelName, sessionId, originalModelName = '') {
   if (!requestContents || !Array.isArray(requestContents)) return;
 
-  const shouldProcessSig = actualModelName && (actualModelName.includes('image') || actualModelName.endsWith('-sig'));
+  // 始终尝试提取签名 (根据用户要求: "别省，普通模型也要下载")
+  // 逻辑: 即使当前是普通模型，如果历史记录里有签名(说明上一轮可能是sig模型)，也应该恢复它，保证上下文完整。
+  const shouldProcessSig = true;
 
   // 并行处理每一条消息
   // 注意：Gemini 格式中，图片通常作为 part 的 inlineData 或 fileData 存在，
@@ -262,14 +264,25 @@ async function processGeminiContentAsync(requestContents, enableThinking, actual
 }
 
 export async function generateGeminiRequestBody(geminiBody, modelName, token) {
-  const enableThinking = isEnableThinking(modelName);
-  const actualModelName = modelMapping(modelName);
+  // 处理 -sig 后缀: 仅用于触发 R2 签名上传，API 请求时需移除
+  let modelNameForMapping = modelName;
+  if (modelName.endsWith('-sig')) {
+    modelNameForMapping = modelName.slice(0, -4);
+  }
+
+  const enableThinking = isEnableThinking(modelName); // isEnableThinking 可能需要原始名称? 
+  // isEnableThinking 内部如果是基于 content 判断的无所谓。如果是基于 model 名?
+  // 假设 isEnableThinking 逻辑不依赖 -sig 或者能正确处理。
+  // 实际上 isEnableThinking 主要看是否是 thinking 模型。
+  // -sig 不改变 thinking 能力，只是改变是否保存签名。
+
+  const actualModelName = modelMapping(modelNameForMapping);
   const request = JSON.parse(JSON.stringify(geminiBody));
 
   if (request.contents && Array.isArray(request.contents)) {
     // 替换原有的 processFunctionCallIds 和 processModelThoughts 调用
     // 改为统一的异步处理
-    await processGeminiContentAsync(request.contents, enableThinking, actualModelName, token.sessionId);
+    await processGeminiContentAsync(request.contents, enableThinking, actualModelName, token.sessionId, modelName);
   }
 
   // 使用统一参数规范化模块处理 Gemini 格式参数
