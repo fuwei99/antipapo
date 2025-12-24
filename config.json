@@ -26,7 +26,7 @@
     "clientSecret": "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"
   },
   "rotation": {
-    "strategy": "request_count",
+    "strategy": "round_robin",
     "requestCount": 50
   },
   "cache": {

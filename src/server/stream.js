@@ -25,11 +25,11 @@ export const createHeartbeat = (res) => {
       clearInterval(timer);
     }
   }, HEARTBEAT_INTERVAL);
-  
+
   // 响应结束时清理
   res.on('close', () => clearInterval(timer));
   res.on('finish', () => clearInterval(timer));
-  
+
   return timer;
 };
 
@@ -121,9 +121,10 @@ export const endStream = (res, isWriteDone = true) => {
  * @param {Function} fn - 要执行的异步函数，接收 attempt 参数
  * @param {number} maxRetries - 最大重试次数
  * @param {string} loggerPrefix - 日志前缀
+ * @param {Function} on429Callback - 遇到 429 时的回调函数
  * @returns {Promise<any>}
  */
-export const with429Retry = async (fn, maxRetries, loggerPrefix = '') => {
+export const with429Retry = async (fn, maxRetries, loggerPrefix = '', on429Callback = null) => {
   const retries = Number.isFinite(maxRetries) && maxRetries > 0 ? Math.floor(maxRetries) : 0;
   let attempt = 0;
   // 首次执行 + 最多 retries 次重试
@@ -135,7 +136,16 @@ export const with429Retry = async (fn, maxRetries, loggerPrefix = '') => {
       const status = Number(error.status || error.statusCode || error.response?.status);
       if (status === 429 && attempt < retries) {
         const nextAttempt = attempt + 1;
-        logger.warn(`${loggerPrefix}收到 429，正在进行第 ${nextAttempt} 次重试（共 ${retries} 次）`);
+        logger.warn(`${loggerPrefix}收到 429，${on429Callback ? '正在执行强制切号并' : '正在'}进行第 ${nextAttempt} 次重试（共 ${retries} 次）`);
+
+        if (typeof on429Callback === 'function') {
+          try {
+            await on429Callback();
+          } catch (e) {
+            logger.error('429 回调执行失败:', e.message);
+          }
+        }
+
         attempt = nextAttempt;
         continue;
       }

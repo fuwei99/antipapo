@@ -54,13 +54,10 @@ export const handleOpenAIRequest = async (req, res) => {
       return res.status(400).json({ error: 'messages is required' });
     }
 
-    const token = await tokenManager.getToken();
-    if (!token) {
-      throw new Error('没有可用的token，请运行 npm run login 获取token');
-    }
-
     const isImageModel = model.includes('-image');
-    const requestBody = generateRequestBody(messages, model, params, tools, token);
+    // getToken 移动到 with429Retry 内部以支持重试换号
+
+    const requestBodyBase = generateRequestBody(messages, model, params, tools, null); // 这里的 token 传 null，后面动态补
 
     if (isImageModel) {
       prepareImageRequest(requestBody);
@@ -77,42 +74,72 @@ export const handleOpenAIRequest = async (req, res) => {
       const heartbeatTimer = createHeartbeat(res);
 
       try {
-        let hasToolCall = false;
-        let usageData = null;
+        if (isImageModel) {
+          const { content, reasoningContent, reasoningSignature, usage } = await with429Retry(
+            async () => {
+              const token = await tokenManager.getToken();
+              if (!token) throw new Error('没有可用的token');
+              const body = { ...requestBodyBase, token: token.access_token };
+              prepareImageRequest(body);
+              return generateAssistantResponseNoStream(body, token);
+            },
+            safeRetries,
+            'chat.stream.image ',
+            () => tokenManager.forceRotate()
+          );
+          if (reasoningContent) {
+            const delta = { reasoning_content: reasoningContent };
+            if (reasoningSignature && config.passSignatureToClient) {
+              delta.thoughtSignature = reasoningSignature;
+            }
+            writeStreamData(res, createStreamChunk(id, created, model, delta));
+          }
+          writeStreamData(res, createStreamChunk(id, created, model, { content }));
+          writeStreamData(res, { ...createStreamChunk(id, created, model, {}, 'stop'), usage });
+        } else {
+          let hasToolCall = false;
+          let usageData = null;
 
-        await with429Retry(
-          () => generateAssistantResponse(requestBody, token, (data) => {
-            if (data.type === 'usage') {
-              usageData = data.usage;
-            } else if (data.type === 'reasoning') {
-              const delta = { reasoning_content: data.reasoning_content };
-              if (data.thoughtSignature && config.passSignatureToClient) {
-                delta.thoughtSignature = data.thoughtSignature;
-              }
-              writeStreamData(res, createStreamChunk(id, created, model, delta));
-            } else if (data.type === 'tool_calls') {
-              hasToolCall = true;
-              // 根据配置决定是否透传工具调用中的签名
-              const toolCallsWithIndex = data.tool_calls.map((toolCall, index) => {
-                if (config.passSignatureToClient) {
-                  return { index, ...toolCall };
+          await with429Retry(
+            async () => {
+              const token = await tokenManager.getToken();
+              if (!token) throw new Error('没有可用的token');
+              const body = { ...requestBodyBase, token: token.access_token };
+              return generateAssistantResponse(body, token, (data) => {
+                if (data.type === 'usage') {
+                  usageData = data.usage;
+                } else if (data.type === 'reasoning') {
+                  const delta = { reasoning_content: data.reasoning_content };
+                  if (data.thoughtSignature && config.passSignatureToClient) {
+                    delta.thoughtSignature = data.thoughtSignature;
+                  }
+                  writeStreamData(res, createStreamChunk(id, created, model, delta));
+                } else if (data.type === 'tool_calls') {
+                  hasToolCall = true;
+                  // 根据配置决定是否透传工具调用中的签名
+                  const toolCallsWithIndex = data.tool_calls.map((toolCall, index) => {
+                    if (config.passSignatureToClient) {
+                      return { index, ...toolCall };
+                    } else {
+                      const { thoughtSignature, ...rest } = toolCall;
+                      return { index, ...rest };
+                    }
+                  });
+                  const delta = { tool_calls: toolCallsWithIndex };
+                  writeStreamData(res, createStreamChunk(id, created, model, delta));
                 } else {
-                  const { thoughtSignature, ...rest } = toolCall;
-                  return { index, ...rest };
+                  const delta = { content: data.content };
+                  writeStreamData(res, createStreamChunk(id, created, model, delta));
                 }
               });
-              const delta = { tool_calls: toolCallsWithIndex };
-              writeStreamData(res, createStreamChunk(id, created, model, delta));
-            } else {
-              const delta = { content: data.content };
-              writeStreamData(res, createStreamChunk(id, created, model, delta));
-            }
-          }),
-          safeRetries,
-          'chat.stream'
-        );
+            },
+            safeRetries,
+            'chat.stream ',
+            () => tokenManager.forceRotate()
+          );
 
-        writeStreamData(res, { ...createStreamChunk(id, created, model, {}, hasToolCall ? 'tool_calls' : 'stop'), usage: usageData });
+          writeStreamData(res, { ...createStreamChunk(id, created, model, {}, hasToolCall ? 'tool_calls' : 'stop'), usage: usageData });
+        }
 
         clearInterval(heartbeatTimer);
         endStream(res);
@@ -126,9 +153,15 @@ export const handleOpenAIRequest = async (req, res) => {
       res.setTimeout(0); // 禁用响应超时
 
       const { content, reasoningContent, reasoningSignature, toolCalls, usage } = await with429Retry(
-        () => generateAssistantResponseNoStream(requestBody, token),
+        async () => {
+          const token = await tokenManager.getToken();
+          if (!token) throw new Error('没有可用的token');
+          const body = generateRequestBody(messages, model, params, tools, token);
+          return generateAssistantResponseNoStream(body, token);
+        },
         safeRetries,
-        'chat.no_stream'
+        'chat.no_stream ',
+        () => tokenManager.forceRotate()
       );
 
       // DeepSeek 格式：reasoning_content 在 content 之前

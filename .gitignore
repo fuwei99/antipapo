@@ -17,7 +17,8 @@ logs/
 Thumbs.db
 
 data/
-test/
+test/*.png
+test/*.jpeg
 public/images
 
 # 编译输出
