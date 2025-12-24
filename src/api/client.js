@@ -184,31 +184,16 @@ export async function generateAssistantResponse(requestBody, token, callback) {
           // Upload image asynchronously
           const uploadPromise = (async () => {
             let imageUrl;
-            let signatureUrl;
-
-            // 如果 R2 可用，上传图片
             if (r2Uploader.isEnabled()) {
               imageUrl = await r2Uploader.uploadImage(data.data, data.mimeType);
-
-              // 如果有思维签名，也上传
-              if (state.reasoningSignature) {
-                const sigFilename = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.txt`;
-                signatureUrl = await r2Uploader.uploadText(state.reasoningSignature, sigFilename);
-              }
             }
-
             // If R2 disabled or failed, fall back to local storage
             if (!imageUrl) {
               imageUrl = saveBase64Image(data.data, data.mimeType);
             }
 
             // After upload, emit markdown image syntax
-            let contentText = `\n\n![image](${imageUrl})\n\n`;
-            if (signatureUrl) {
-              contentText += `[](${signatureUrl})\n\n`;
-            }
-
-            callback({ type: 'text', content: contentText });
+            callback({ type: 'text', content: `\n\n![image](${imageUrl})\n\n` });
           })();
           // We can't easily await this here without blocking the stream parser, 
           // but since it's just firing a callback eventually, it should be fine.
@@ -403,9 +388,13 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
   } catch (error) {
     await handleApiError(error, token);
   }
-  //console.log(JSON.stringify(data));
+  // console.log(JSON.stringify(data));
   // 解析响应内容
   const parts = data.response?.candidates?.[0]?.content?.parts || [];
+
+  // DEBUG: Dump parts structure
+  console.log('[DEBUG] Response Parts:', JSON.stringify(parts.map(p => Object.keys(p)), null, 2));
+
   let content = '';
   let reasoningContent = '';
   let reasoningSignature = null;
@@ -413,12 +402,18 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
   const imageUrls = [];
 
   for (const part of parts) {
+    // 优先检查 thoughtSignature，无论是否标记为 thought
+    if (part.thoughtSignature) {
+      console.log('[DEBUG] Found thoughtSignature in part');
+      if (!reasoningSignature) {
+        reasoningSignature = part.thoughtSignature;
+      }
+    }
+
     if (part.thought === true) {
       // 思维链内容 - 使用 DeepSeek 格式的 reasoning_content
       reasoningContent += part.text || '';
-      if (part.thoughtSignature && !reasoningSignature) {
-        reasoningSignature = part.thoughtSignature;
-      }
+      // (thoughtSignature logic moved up)
     } else if (part.text !== undefined) {
       content += part.text;
     } else if (part.functionCall) {
@@ -429,17 +424,61 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
       toolCalls.push(toolCall);
     } else if (part.inlineData) {
       // Save image to R2 or local
-      let imageUrl;
-      if (r2Uploader.isEnabled()) {
-        imageUrl = await r2Uploader.uploadImage(part.inlineData.data, part.inlineData.mimeType);
-      }
-
-      if (!imageUrl) {
-        imageUrl = saveBase64Image(part.inlineData.data, part.inlineData.mimeType);
-      }
-      imageUrls.push(imageUrl);
+      console.log(`[DEBUG] ${new Date().toISOString()} 收到 inlineData 图片数据, mimeType: ${part.inlineData.mimeType}`);
+      imageUrls.push({ type: 'task', part: part }); // Push task object instead of result
     }
   }
+
+  // 并行处理图片和签名上传
+  // 1. 图片上传任务
+  const imageUploadTasks = imageUrls.map(async (item, index) => {
+    if (typeof item === 'string') return item; // Safety check
+    const { part } = item;
+
+    let imageUrl;
+    if (r2Uploader.isEnabled()) {
+      console.log(`[DEBUG] ${new Date().toISOString()} R2 已启用, 尝试上传图片...`);
+      imageUrl = await r2Uploader.uploadImage(part.inlineData.data, part.inlineData.mimeType);
+      console.log(`[DEBUG] ${new Date().toISOString()} R2 图片上传结果: ${imageUrl}`);
+    }
+
+    if (!imageUrl) {
+      console.log(`[DEBUG] ${new Date().toISOString()} R2 未启用或上传失败, 保存到本地...`);
+      imageUrl = saveBase64Image(part.inlineData.data, part.inlineData.mimeType);
+    }
+    return imageUrl;
+  });
+
+  // 2. 签名上传任务 (如果存在且需要上传)
+  let signatureUploadTask = Promise.resolve(null);
+  // 只在有 Image 且有 Signature 时上传签名 (模仿原有逻辑: if resolvedImageUrls.length > 0)
+  // 或者更积极一点: 只要有 Signature 就上传? 原逻辑是 "生图模型" 才上传
+  // 原逻辑: if (imageUrls.length > 0) { if (signature) ... }
+  // 我们可以在这里判断 imageUrls.length > 0
+  if (imageUrls.length > 0 && reasoningSignature && r2Uploader.isEnabled()) {
+    console.log(`[DEBUG] ${new Date().toISOString()} 检测到思维签名，长度: ${reasoningSignature.length}，准备并行上传...`);
+    const filename = `sig_${Date.now()}_${Math.random().toString(36).substring(2)}.txt`;
+    signatureUploadTask = r2Uploader.uploadText(reasoningSignature, filename)
+      .then(sigUrl => {
+        if (sigUrl) {
+          console.log(`[DEBUG] ${new Date().toISOString()} 签名上传成功: ${sigUrl}`);
+          logger.info(`思维签名已上传: ${sigUrl}`);
+          return sigUrl;
+        }
+        return null;
+      })
+      .catch(err => {
+        console.error(`[ERROR] ${new Date().toISOString()} 签名上传失败: ${err.message}`);
+        logger.error(`思维签名上传失败: ${err.message}`);
+        return null;
+      });
+  }
+
+  // 3. 等待所有任务完成
+  const [resolvedImageUrls, resolvedSigUrl] = await Promise.all([
+    Promise.all(imageUploadTasks),
+    signatureUploadTask
+  ]);
 
   // 提取 token 使用统计
   const usage = data.response?.usageMetadata;
@@ -464,18 +503,18 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
   }
 
   // 生图模型：转换为 markdown 格式
-  if (imageUrls.length > 0) {
+  if (resolvedImageUrls.length > 0) {
     let markdown = content ? content + '\n\n' : '';
-    markdown += imageUrls.map(url => `![image](${url})`).join('\n\n');
+    markdown += resolvedImageUrls.map(url => `![image](${url})`).join('\n\n');
 
-    // 如果有思维签名且开启了 R2，上传并附带链接
-    if (reasoningSignature && r2Uploader.isEnabled()) {
-      const sigFilename = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.txt`;
-      const signatureUrl = await r2Uploader.uploadText(reasoningSignature, sigFilename);
-      if (signatureUrl) {
-        markdown += `\n\n[](${signatureUrl})`;
-      }
+    // 如果存在思维签名 (上传成功的 URL)，将其注入
+    if (resolvedSigUrl) {
+      // 使用用户指定的格式: [](SIG_URL:url)
+      markdown += `\n\n[](SIG_URL:${resolvedSigUrl})`;
+    } else if (reasoningSignature && r2Uploader.isEnabled()) {
+      console.log(`[DEBUG] ${new Date().toISOString()} 签名未能上传成功 (URL 为空)`);
     }
+
 
     return { content: markdown, reasoningContent: reasoningContent || null, reasoningSignature, toolCalls, usage: usageData };
   }

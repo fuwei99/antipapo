@@ -163,6 +163,8 @@ export function buildConfig(jsonConfig) {
     systemInstruction: process.env.SYSTEM_INSTRUCTION || '',
     skipProjectIdFetch: jsonConfig.other?.skipProjectIdFetch === true,
     useContextSystemPrompt: jsonConfig.other?.useContextSystemPrompt === true,
+    skipProjectIdFetch: jsonConfig.other?.skipProjectIdFetch === true,
+    useContextSystemPrompt: jsonConfig.other?.useContextSystemPrompt === true,
     passSignatureToClient: jsonConfig.other?.passSignatureToClient === true,
     r2: jsonConfig.r2 || { enabled: false }
   };

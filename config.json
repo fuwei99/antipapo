@@ -1,7 +1,8 @@
 {
   "server": {
     "port": 8045,
-    "host": "0.0.0.0"
+    "host": "0.0.0.0",
+    "maxRequestSize": "1000mb"
   },
   "api": {
     "url": "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:streamGenerateContent?alt=sse",
@@ -37,7 +38,7 @@
     "retryTimes": 3,
     "skipProjectIdFetch": true,
     "useNativeAxios": false,
-    "useContextSystemPrompt": true,
+    "useContextSystemPrompt": false,
     "passSignatureToClient": false
   },
   "r2": {

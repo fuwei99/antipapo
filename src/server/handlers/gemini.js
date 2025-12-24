@@ -180,7 +180,9 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
             async () => {
               const token = await tokenManager.getToken();
               if (!token) throw new Error('没有可用的token');
-              const body = generateGeminiRequestBody(req.body, modelName, token);
+              console.log(`[DEBUG] Gemini Stream Image Request Body Generation Start`);
+              const body = await generateGeminiRequestBody(req.body, modelName, token);
+              console.log(`[DEBUG] Gemini Stream Image Request Body Generation End`);
               prepareImageRequest(body);
               return generateAssistantResponseNoStream(body, token);
             },
@@ -202,7 +204,7 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
           async () => {
             const token = await tokenManager.getToken();
             if (!token) throw new Error('没有可用的token');
-            const body = generateGeminiRequestBody(req.body, modelName, token);
+            const body = await generateGeminiRequestBody(req.body, modelName, token);
             return generateAssistantResponse(body, token, (data) => {
               if (data.type === 'usage') {
                 usageData = data.usage;
@@ -253,7 +255,7 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
         async () => {
           const token = await tokenManager.getToken();
           if (!token) throw new Error('没有可用的token');
-          const body = generateGeminiRequestBody(req.body, modelName, token);
+          const body = await generateGeminiRequestBody(req.body, modelName, token);
           return generateAssistantResponseNoStream(body, token);
         },
         safeRetries,

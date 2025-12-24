@@ -27,42 +27,9 @@ export function getSignatureContext(sessionId, actualModelName) {
  * @param {Array} antigravityMessages - 目标消息数组
  */
 export function pushUserMessage(extracted, antigravityMessages) {
-  const parts = [{ text: extracted.text }, ...extracted.images];
-  // 如果提取到了思维签名，且当前是第一条 parts（通常是的），则绑定上去
-  // 注意：Antigravity 或底层 API 是否支持 user 消息带 thoughtSignature 需要验证。
-  // 假设这里我们模拟的是 model 给出的上下文恢复，通常这个 signature 应该是属于 *上一条* model 回复的。
-  // 但用户的请求里带了这个，意味着这可能是 User 提供的 "Assistant 上一次的签名" 作为上下文。
-  // 在 Antigravity 里，通常 signature 是附在 model 消息上的。
-  // 按照需求 "发现思维链txt...并行下载"，恢复上下文。
-  // 如果这个链接是在 user 消息里，那它应当代表 *User* 告诉 *Model* "这是你之前的签名"。
-  // 但 Google API 一般要求 signature 在 model 消息里。
-  // 如果我们是在恢复历史对话，这个 content 是属于 user 的还是 model 的？
-  // 如果是 user 发送的消息包含这个链接，那就是 user message。
-  // 如果是 history 中 model 的消息包含这个链接（因为我们之前 append 到了回复里），那它在 history 中会被解析为 model message。
-  // *关键点*：我们的 converter 处理的是 "messages" 数组。
-  // 如果是 `role: 'assistant'` (OpenAI) 或 `role: 'model'` (client.js输出后)，我们之前 append 的 `[](...)` 会在 content 里。
-  // 所以我们需要修改的是 `handleAssistantMessage` 中的提取逻辑！
-  // 等等，用户说 "针对image模型...直接把思维标签转txt上传...返回客户端"。
-  // 客户端收到的是 Assistant 的回复。用户下次带上来的是 History。
-  // History 里这条消息 role 是 assistant。
-  // 所以我必须修改 `handleAssistantMessage` (OpenAI 转换器) 和 `handleClaudeAssistantMessage`。
-
-  // 但是，我也修改了 `extractImagesFromContent`，它目前只在 role='user' | 'system' 时被调用 (Line 131 in openai.js)。
-  // 这是一个重大发现。`extractImagesFromContent` 只用于 User 消息。
-  // Assistant 消息的处理在 `handleAssistantMessage`。
-  // 我需要检查 `handleAssistantMessage` 是否处理 markdown 图片/链接？
-  // openai.js Line 47 `handleAssistantMessage` 直接使用 `message.content`。
-  // 它没有调用 `extractImagesFromContent`。
-  // 这意味着如果 history 里 assistant 消息带了 `[](.txt)`，目前的逻辑根本不会去下载它！
-
-  // 修正计划：
-  // 1. common.js 不需要改 user 消息处理（除非 user 也能带签名，暂不考虑）。
-  // 2. 必须修改 `openai.js` 和 `claude.js` 的 `handleAssistantMessage/handleClaudeAssistantMessage`，
-  //    让它们也能识别并提取 `thoughtSignature` 链接，并下载，然后赋值给 model message 的 parts。
-
   antigravityMessages.push({
     role: 'user',
-    parts: parts
+    parts: [{ text: extracted.text }, ...extracted.images]
   });
 }
 

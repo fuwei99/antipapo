@@ -89,10 +89,10 @@ export function generateGenerationConfig(parameters, enableThinking, actualModel
 
   // 使用统一的参数转换函数
   const generationConfig = toGenerationConfig(normalizedParams, enableThinking, actualModelName);
-  
+
   // 添加 stopSequences
   generationConfig.stopSequences = DEFAULT_STOP_SEQUENCES;
-  
+
   return generationConfig;
 }
 
@@ -107,8 +107,8 @@ export function extractSystemInstruction(openaiMessages) {
       const content = typeof message.content === 'string'
         ? message.content
         : (Array.isArray(message.content)
-            ? message.content.filter(item => item.type === 'text').map(item => item.text).join('')
-            : '');
+          ? message.content.filter(item => item.type === 'text').map(item => item.text).join('')
+          : '');
       if (content.trim()) systemTexts.push(content.trim());
     } else {
       break;
@@ -125,17 +125,17 @@ export function extractSystemInstruction(openaiMessages) {
 export function prepareImageRequest(requestBody) {
   if (!requestBody || !requestBody.request) return requestBody;
   let imageSize = "1K";
-  if (requestBody.model.includes('4K')){
+  if (requestBody.model.includes('4K')) {
     imageSize = "4K";
-  } else if (requestBody.model.includes('2K')){
+  } else if (requestBody.model.includes('2K')) {
     imageSize = "2K";
   } else {
     imageSize = "1K";
   }
-  if (imageSize !== "1K"){
+  if (imageSize !== "1K") {
     requestBody.model = requestBody.model.slice(0, -3);
   }
-  requestBody.request.generationConfig = { 
+  requestBody.request.generationConfig = {
     candidateCount: 1,
     imageConfig: {
       imageSize: imageSize
@@ -146,6 +146,90 @@ export function prepareImageRequest(requestBody) {
   delete requestBody.request.tools;
   delete requestBody.request.toolConfig;
   return requestBody;
+}
+
+// ==================== 资源获取工具 (带缓存) ====================
+const resourceCache = new Map();
+const CACHE_LIMIT = 20; // 降低缓存数量限制，防止内存暴涨 (100张图可能占用几百MB)
+
+function getFromCache(url) {
+  if (resourceCache.has(url)) {
+    console.log(`[DEBUG] Cache hit: ${url}`);
+    // Refresh LRU position
+    const data = resourceCache.get(url);
+    resourceCache.delete(url);
+    resourceCache.set(url, data);
+    return data;
+  }
+  return null;
+}
+
+function addToCache(url, data) {
+  if (resourceCache.size >= CACHE_LIMIT) {
+    // Remove oldest (first inserted)
+    const oldestKey = resourceCache.keys().next().value;
+    resourceCache.delete(oldestKey);
+  }
+  resourceCache.set(url, data);
+}
+
+export async function fetchText(url) {
+  const cached = getFromCache(url);
+  if (cached) return cached;
+
+  try {
+    console.log(`[DEBUG] ${new Date().toISOString()} fetchText start: ${url}`);
+
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        console.log(`[DEBUG] ${new Date().toISOString()} fetchText success, length: ${text.length}`);
+        addToCache(url, text);
+        return text;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[WARN] ${new Date().toISOString()} fetchText attempt ${i + 1} failed: ${err.message}`);
+        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      }
+    }
+    throw lastError;
+  } catch (error) {
+    console.error(`[ERROR] ${new Date().toISOString()} 下载文本失败 ${url} (Retry exhausted):`, error);
+    return null;
+  }
+}
+
+export async function fetchImageBase64(url) {
+  const cached = getFromCache(url);
+  if (cached) return cached;
+
+  try {
+    console.log(`[DEBUG] ${new Date().toISOString()} fetchImageBase64 start: ${url}`);
+
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        console.log(`[DEBUG] ${new Date().toISOString()} fetchImageBase64 success, base64 length: ${base64.length}`);
+        addToCache(url, base64);
+        return base64;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[WARN] ${new Date().toISOString()} fetchImageBase64 attempt ${i + 1} failed: ${err.message}`);
+        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      }
+    }
+    throw lastError;
+  } catch (error) {
+    console.error(`[ERROR] ${new Date().toISOString()} 下载图片失败 ${url} (Retry exhausted):`, error);
+    return null;
+  }
 }
 
 // ==================== 其他工具 ====================

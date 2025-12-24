@@ -57,11 +57,7 @@ export const handleOpenAIRequest = async (req, res) => {
     const isImageModel = model.includes('-image');
     // getToken 移动到 with429Retry 内部以支持重试换号
 
-    const requestBodyBase = await generateRequestBody(messages, model, params, tools, null); // 这里的 token 传 null，后面动态补
 
-    if (isImageModel) {
-      prepareImageRequest(requestBody);
-    }
     //console.log(JSON.stringify(requestBody,null,2));
     const { id, created } = createResponseMeta();
     const maxRetries = Number(config.retryTimes || 0);
@@ -79,8 +75,10 @@ export const handleOpenAIRequest = async (req, res) => {
             async () => {
               const token = await tokenManager.getToken();
               if (!token) throw new Error('没有可用的token');
-              const body = { ...requestBodyBase, token: token.access_token };
+
+              const body = await generateRequestBody(messages, model, params, tools, token);
               prepareImageRequest(body);
+
               return generateAssistantResponseNoStream(body, token);
             },
             safeRetries,
@@ -104,7 +102,8 @@ export const handleOpenAIRequest = async (req, res) => {
             async () => {
               const token = await tokenManager.getToken();
               if (!token) throw new Error('没有可用的token');
-              const body = { ...requestBodyBase, token: token.access_token };
+
+              const body = await generateRequestBody(messages, model, params, tools, token);
               return generateAssistantResponse(body, token, (data) => {
                 if (data.type === 'usage') {
                   usageData = data.usage;
@@ -156,6 +155,7 @@ export const handleOpenAIRequest = async (req, res) => {
         async () => {
           const token = await tokenManager.getToken();
           if (!token) throw new Error('没有可用的token');
+
           const body = await generateRequestBody(messages, model, params, tools, token);
           return generateAssistantResponseNoStream(body, token);
         },

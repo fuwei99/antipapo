@@ -1,8 +1,7 @@
 // OpenAI 格式转换工具
 import config from '../../config/config.js';
-import { extractSystemInstruction } from '../utils.js';
+import { extractSystemInstruction, fetchText, fetchImageBase64 } from '../utils.js';
 import { convertOpenAIToolsToAntigravity } from '../toolConverter.js';
-import { downloadImage } from '../imageDownloader.js';
 import {
   getSignatureContext,
   pushUserMessage,
@@ -18,60 +17,16 @@ import {
   generateGenerationConfig
 } from './common.js';
 
-// 匹配 markdown 图片语法: ![alt](url)
-const MD_IMAGE_REGEX = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
-
-async function extractImagesFromContent(content) {
+function extractImagesFromContent(content) {
   const result = { text: '', images: [] };
-  const tasks = [];
-
-  const processText = (text) => {
-    // 查找所有 markdown 图片链接
-    const matches = [...text.matchAll(MD_IMAGE_REGEX)];
-
-    // 如果没有图片，直接返回原文本
-    if (matches.length === 0) {
-      return text;
-    }
-
-    let lastIndex = 0;
-    let newText = '';
-
-    for (const match of matches) {
-      const [fullMatch, url] = match;
-      const index = match.index;
-
-      // 添加图片前的文本
-      newText += text.slice(lastIndex, index);
-
-      // 添加下载任务
-      tasks.push(
-        downloadImage(url).then(imgData => {
-          if (imgData) {
-            result.images.push({
-              inlineData: {
-                mimeType: imgData.mimeType,
-                data: imgData.data
-              }
-            });
-          }
-        })
-      );
-
-      lastIndex = index + fullMatch.length;
-    }
-
-    // 添加剩余文本
-    newText += text.slice(lastIndex);
-    return newText;
-  };
-
   if (typeof content === 'string') {
-    result.text = processText(content);
-  } else if (Array.isArray(content)) {
+    result.text = content;
+    return result;
+  }
+  if (Array.isArray(content)) {
     for (const item of content) {
       if (item.type === 'text') {
-        result.text += processText(item.text);
+        result.text += item.text;
       } else if (item.type === 'image_url') {
         const imageUrl = item.image_url?.url || '';
         const match = imageUrl.match(/^data:image\/(\w+);base64,(.+)$/);
@@ -86,10 +41,6 @@ async function extractImagesFromContent(content) {
       }
     }
   }
-
-  // 等待所有图片下载完成
-  await Promise.all(tasks);
-
   return result;
 }
 
@@ -123,14 +74,138 @@ function handleToolCall(message, antigravityMessages) {
   pushFunctionResponse(message.tool_call_id, functionName, message.content, antigravityMessages);
 }
 
+// 异步处理单条 User 消息
+async function handleUserMessageAsync(message, antigravityMessages, pendingImages) {
+  const extracted = extractImagesFromContent(message.content);
+
+  // 如果有待处理图片（来自上一条 Assistant），注入到当前 User 消息
+  if (pendingImages && pendingImages.length > 0) {
+    const imageParts = pendingImages.map(img => ({
+      inlineData: {
+        mimeType: "image/jpeg",
+        data: img
+      }
+    }));
+
+    extracted.text = `Attached is the image you just generated\n${extracted.text}`;
+    extracted.images.unshift(...imageParts);
+    // 清空 pendingImages 数组内容
+    pendingImages.length = 0;
+  }
+
+  pushUserMessage(extracted, antigravityMessages);
+}
+
+// 异步处理单条 Assistant 消息
+async function handleAssistantMessageAsync(message, antigravityMessages, enableThinking, actualModelName, sessionId, shouldProcessSig) {
+  let content = message.content || '';
+  let currentSignature = null;
+  const pendingImages = [];
+
+  // 1. 并行下载任务列表
+  const tasks = [];
+
+  // 1.1 签名 URL 提取与下载任务
+  if (shouldProcessSig && typeof content === 'string') {
+    // 支持两种格式: <!-- SIG_URL: url --> 和 [](SIG_URL:url)
+    const sigRegex = /<!-- SIG_URL: (https?:\/\/[^ ]+) -->|\[\]\(SIG_URL:(https?:\/\/[^)]+)\)/;
+    const sigMatch = content.match(sigRegex);
+
+    if (sigMatch) {
+      const sigUrl = sigMatch[1] || sigMatch[2];
+      // console.log(`[DEBUG] 发现签名 URL: ${sigUrl}`);
+      const task = fetchText(sigUrl).then(sig => {
+        if (sig) currentSignature = sig;
+      });
+      tasks.push(task);
+
+      // 移除签名标记
+      content = content.replace(sigMatch[0], '');
+    }
+  }
+
+  // 1.2 图片 URL 提取与下载任务
+  const imgRegex = /!\[.*?\]\((https?:\/\/[^)]+)\)/g;
+  const imgMatches = typeof content === 'string' ? [...content.matchAll(imgRegex)] : [];
+
+  if (imgMatches.length > 0) {
+    // console.log(`[DEBUG] 发现 ${imgMatches.length} 个图片链接`);
+    // 保持图片顺序
+    const imageTasks = imgMatches.map(async (match) => {
+      const url = match[1];
+      const base64 = await fetchImageBase64(url);
+      return base64;
+    });
+
+    tasks.push(Promise.all(imageTasks).then(images => {
+      images.forEach(img => {
+        if (img) pendingImages.push(img);
+      });
+    }));
+  }
+
+  // 等待所有下载完成
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+
+  // 更新 message content (已移除签名)
+  const messageCopy = { ...message, content };
+
+  // 调用原有同步逻辑处理剩余部分
+  const hasToolCalls = messageCopy.tool_calls && messageCopy.tool_calls.length > 0;
+  const hasContent = messageCopy.content && messageCopy.content.trim() !== '';
+  // 注意：这里我们需要把 fetch 到的 currentSignature 传递进去，但原有 handleAssistantMessage 内部是去 cache 读的。
+  // 为了支持恢复，我们需要修改 handleAssistantMessage 或者在这里手动构造 parts。
+  // 鉴于 handleAssistantMessage 比较复杂，我们扩展它支持传入 signature。
+
+  // 复用 common.js 中的逻辑，但我们需要手动覆盖 signature
+  const { toolSignature } = getSignatureContext(sessionId, actualModelName); // reasoningSignature 优先使用下载的
+
+  const toolCalls = hasToolCalls
+    ? messageCopy.tool_calls.map(toolCall => {
+      const safeName = processToolName(toolCall.function.name, sessionId, actualModelName);
+      // 如果 enableThinking 且有 currentSignature，优先使用下载的签名（通常工具调用此时会带上）
+      // 但通常图片生成后的签名是 reasoningSignature。
+      const signature = enableThinking ? (toolCall.thoughtSignature || toolSignature) : null;
+      return createFunctionCallPart(toolCall.id, safeName, toolCall.function.arguments, signature);
+    })
+    : [];
+
+  const parts = [];
+  if (enableThinking) {
+    const reasoningText = (typeof messageCopy.reasoning_content === 'string' && messageCopy.reasoning_content.length > 0)
+      ? messageCopy.reasoning_content : ' ';
+    parts.push(createThoughtPart(reasoningText));
+  }
+
+  // 使用下载的签名覆盖
+  const finalSignature = currentSignature || messageCopy.thoughtSignature || getSignatureContext(sessionId, actualModelName).reasoningSignature;
+
+  if (hasContent) parts.push({ text: messageCopy.content.trimEnd(), thoughtSignature: finalSignature });
+  if (!enableThinking && parts[0]) delete parts[0].thoughtSignature;
+
+  pushModelMessage({ parts, toolCalls, hasContent }, antigravityMessages);
+
+  return pendingImages;
+}
+
 async function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelName, sessionId) {
   const antigravityMessages = [];
+  let pendingImages = [];
+
+  // 判断是否需要处理签名
+  const shouldProcessSig = actualModelName && (actualModelName.includes('image') || actualModelName.endsWith('-sig'));
+
   for (const message of openaiMessages) {
     if (message.role === 'user' || message.role === 'system') {
-      const extracted = await extractImagesFromContent(message.content);
-      pushUserMessage(extracted, antigravityMessages);
+      await handleUserMessageAsync(message, antigravityMessages, pendingImages);
+      pendingImages = []; // 清空
     } else if (message.role === 'assistant') {
-      handleAssistantMessage(message, antigravityMessages, enableThinking, actualModelName, sessionId);
+      const newImages = await handleAssistantMessageAsync(message, antigravityMessages, enableThinking, actualModelName, sessionId, shouldProcessSig);
+      if (newImages && newImages.length > 0) {
+        pendingImages = newImages;
+      }
     } else if (message.role === 'tool') {
       handleToolCall(message, antigravityMessages);
     }
@@ -160,7 +235,7 @@ export async function generateRequestBody(openaiMessages, modelName, parameters,
   const contents = await openaiMessageToAntigravity(filteredMessages, enableThinking, actualModelName, token.sessionId);
 
   return buildRequestBody({
-    contents,
+    contents: contents,
     tools: convertOpenAIToolsToAntigravity(openaiTools, token.sessionId, actualModelName),
     generationConfig: generateGenerationConfig(parameters, enableThinking, actualModelName),
     sessionId: token.sessionId,
