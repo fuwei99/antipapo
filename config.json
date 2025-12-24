@@ -1,0 +1,51 @@
+{
+  "server": {
+    "port": 8045,
+    "host": "0.0.0.0"
+  },
+  "api": {
+    "url": "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+    "modelsUrl": "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+    "host": "daily-cloudcode-pa.sandbox.googleapis.com",
+    "userAgent": "antigravity/1.11.3 windows/amd64"
+  },
+  "defaults": {
+    "temperature": 1,
+    "top_p": 0.85,
+    "top_k": 50,
+    "max_tokens": 8096
+  },
+  "security": {
+    "maxRequestSize": "200mb",
+    "apiKey": "sk-1234",
+    "adminPassword": "admin123"
+  },
+  "systemInstruction": "",
+  "oauth": {
+    "clientId": "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    "clientSecret": "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"
+  },
+  "rotation": {
+    "strategy": "request_count",
+    "requestCount": 50
+  },
+  "cache": {
+    "modelListTTL": 3600000
+  },
+  "other": {
+    "timeout": 300000,
+    "retryTimes": 3,
+    "skipProjectIdFetch": true,
+    "useNativeAxios": false,
+    "useContextSystemPrompt": true,
+    "passSignatureToClient": false
+  },
+  "r2": {
+    "enabled": true,
+    "bucketName": "nano-banana",
+    "accountId": "82417693426132c19476cb62afd2fb74",
+    "accessKeyId": "4d086d0c17dbb33897c577afe17148b9",
+    "secretAccessKey": "548472c81fae0ed4b9d7fd5c888c0816cd230167716b0b7cdb96465fea04ef0d",
+    "publicUrl": "https://image.maltobitoo.xyz"
+  }
+}
