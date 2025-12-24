@@ -184,16 +184,31 @@ export async function generateAssistantResponse(requestBody, token, callback) {
           // Upload image asynchronously
           const uploadPromise = (async () => {
             let imageUrl;
+            let signatureUrl;
+
+            // 如果 R2 可用，上传图片
             if (r2Uploader.isEnabled()) {
               imageUrl = await r2Uploader.uploadImage(data.data, data.mimeType);
+
+              // 如果有思维签名，也上传
+              if (state.reasoningSignature) {
+                const sigFilename = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.txt`;
+                signatureUrl = await r2Uploader.uploadText(state.reasoningSignature, sigFilename);
+              }
             }
+
             // If R2 disabled or failed, fall back to local storage
             if (!imageUrl) {
               imageUrl = saveBase64Image(data.data, data.mimeType);
             }
 
             // After upload, emit markdown image syntax
-            callback({ type: 'text', content: `\n\n![image](${imageUrl})\n\n` });
+            let contentText = `\n\n![image](${imageUrl})\n\n`;
+            if (signatureUrl) {
+              contentText += `[](${signatureUrl})\n\n`;
+            }
+
+            callback({ type: 'text', content: contentText });
           })();
           // We can't easily await this here without blocking the stream parser, 
           // but since it's just firing a callback eventually, it should be fine.
@@ -452,6 +467,16 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
   if (imageUrls.length > 0) {
     let markdown = content ? content + '\n\n' : '';
     markdown += imageUrls.map(url => `![image](${url})`).join('\n\n');
+
+    // 如果有思维签名且开启了 R2，上传并附带链接
+    if (reasoningSignature && r2Uploader.isEnabled()) {
+      const sigFilename = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.txt`;
+      const signatureUrl = await r2Uploader.uploadText(reasoningSignature, sigFilename);
+      if (signatureUrl) {
+        markdown += `\n\n[](${signatureUrl})`;
+      }
+    }
+
     return { content: markdown, reasoningContent: reasoningContent || null, reasoningSignature, toolCalls, usage: usageData };
   }
 

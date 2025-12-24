@@ -2,6 +2,7 @@
 import config from '../../config/config.js';
 import { extractSystemInstruction } from '../utils.js';
 import { convertOpenAIToolsToAntigravity } from '../toolConverter.js';
+import { downloadImage } from '../imageDownloader.js';
 import {
   getSignatureContext,
   pushUserMessage,
@@ -17,16 +18,60 @@ import {
   generateGenerationConfig
 } from './common.js';
 
-function extractImagesFromContent(content) {
+// 匹配 markdown 图片语法: ![alt](url)
+const MD_IMAGE_REGEX = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
+
+async function extractImagesFromContent(content) {
   const result = { text: '', images: [] };
+  const tasks = [];
+
+  const processText = (text) => {
+    // 查找所有 markdown 图片链接
+    const matches = [...text.matchAll(MD_IMAGE_REGEX)];
+
+    // 如果没有图片，直接返回原文本
+    if (matches.length === 0) {
+      return text;
+    }
+
+    let lastIndex = 0;
+    let newText = '';
+
+    for (const match of matches) {
+      const [fullMatch, url] = match;
+      const index = match.index;
+
+      // 添加图片前的文本
+      newText += text.slice(lastIndex, index);
+
+      // 添加下载任务
+      tasks.push(
+        downloadImage(url).then(imgData => {
+          if (imgData) {
+            result.images.push({
+              inlineData: {
+                mimeType: imgData.mimeType,
+                data: imgData.data
+              }
+            });
+          }
+        })
+      );
+
+      lastIndex = index + fullMatch.length;
+    }
+
+    // 添加剩余文本
+    newText += text.slice(lastIndex);
+    return newText;
+  };
+
   if (typeof content === 'string') {
-    result.text = content;
-    return result;
-  }
-  if (Array.isArray(content)) {
+    result.text = processText(content);
+  } else if (Array.isArray(content)) {
     for (const item of content) {
       if (item.type === 'text') {
-        result.text += item.text;
+        result.text += processText(item.text);
       } else if (item.type === 'image_url') {
         const imageUrl = item.image_url?.url || '';
         const match = imageUrl.match(/^data:image\/(\w+);base64,(.+)$/);
@@ -41,6 +86,10 @@ function extractImagesFromContent(content) {
       }
     }
   }
+
+  // 等待所有图片下载完成
+  await Promise.all(tasks);
+
   return result;
 }
 
@@ -74,11 +123,11 @@ function handleToolCall(message, antigravityMessages) {
   pushFunctionResponse(message.tool_call_id, functionName, message.content, antigravityMessages);
 }
 
-function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelName, sessionId) {
+async function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelName, sessionId) {
   const antigravityMessages = [];
   for (const message of openaiMessages) {
     if (message.role === 'user' || message.role === 'system') {
-      const extracted = extractImagesFromContent(message.content);
+      const extracted = await extractImagesFromContent(message.content);
       pushUserMessage(extracted, antigravityMessages);
     } else if (message.role === 'assistant') {
       handleAssistantMessage(message, antigravityMessages, enableThinking, actualModelName, sessionId);
@@ -90,7 +139,7 @@ function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelN
   return antigravityMessages;
 }
 
-export function generateRequestBody(openaiMessages, modelName, parameters, openaiTools, token) {
+export async function generateRequestBody(openaiMessages, modelName, parameters, openaiTools, token) {
   const enableThinking = isEnableThinking(modelName);
   const actualModelName = modelMapping(modelName);
   const mergedSystemInstruction = extractSystemInstruction(openaiMessages);
@@ -108,8 +157,10 @@ export function generateRequestBody(openaiMessages, modelName, parameters, opena
     }
   }
 
+  const contents = await openaiMessageToAntigravity(filteredMessages, enableThinking, actualModelName, token.sessionId);
+
   return buildRequestBody({
-    contents: openaiMessageToAntigravity(filteredMessages, enableThinking, actualModelName, token.sessionId),
+    contents,
     tools: convertOpenAIToolsToAntigravity(openaiTools, token.sessionId, actualModelName),
     generationConfig: generateGenerationConfig(parameters, enableThinking, actualModelName),
     sessionId: token.sessionId,

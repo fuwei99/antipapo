@@ -57,7 +57,7 @@ export const handleOpenAIRequest = async (req, res) => {
     const isImageModel = model.includes('-image');
     // getToken 移动到 with429Retry 内部以支持重试换号
 
-    const requestBodyBase = generateRequestBody(messages, model, params, tools, null); // 这里的 token 传 null，后面动态补
+    const requestBodyBase = await generateRequestBody(messages, model, params, tools, null); // 这里的 token 传 null，后面动态补
 
     if (isImageModel) {
       prepareImageRequest(requestBody);
@@ -156,7 +156,7 @@ export const handleOpenAIRequest = async (req, res) => {
         async () => {
           const token = await tokenManager.getToken();
           if (!token) throw new Error('没有可用的token');
-          const body = generateRequestBody(messages, model, params, tools, token);
+          const body = await generateRequestBody(messages, model, params, tools, token);
           return generateAssistantResponseNoStream(body, token);
         },
         safeRetries,

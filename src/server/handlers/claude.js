@@ -156,7 +156,7 @@ export const handleClaudeRequest = async (req, res, isStream) => {
               const token = await tokenManager.getToken();
               if (!token) throw new Error('没有可用的token');
               const parameters = normalizeClaudeParameters(rawParams);
-              const body = generateClaudeRequestBody(messages, model, parameters, tools, system, token);
+              const body = await generateClaudeRequestBody(messages, model, parameters, tools, system, token);
               prepareImageRequest(body);
               return generateAssistantResponseNoStream(body, token);
             },
@@ -201,7 +201,7 @@ export const handleClaudeRequest = async (req, res, isStream) => {
             const token = await tokenManager.getToken();
             if (!token) throw new Error('没有可用的token');
             const parameters = normalizeClaudeParameters(rawParams);
-            const body = generateClaudeRequestBody(messages, model, parameters, tools, system, token);
+            const body = await generateClaudeRequestBody(messages, model, parameters, tools, system, token);
             return generateAssistantResponse(body, token, (data) => {
               if (data.type === 'usage') {
                 usageData = data.usage;
@@ -347,7 +347,7 @@ export const handleClaudeRequest = async (req, res, isStream) => {
           const token = await tokenManager.getToken();
           if (!token) throw new Error('没有可用的token');
           const parameters = normalizeClaudeParameters(rawParams);
-          const body = generateClaudeRequestBody(messages, model, parameters, tools, system, token);
+          const body = await generateClaudeRequestBody(messages, model, parameters, tools, system, token);
           return generateAssistantResponseNoStream(body, token);
         },
         safeRetries,

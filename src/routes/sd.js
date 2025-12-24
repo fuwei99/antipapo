@@ -134,7 +134,7 @@ router.post('/img2img', async (req, res) => {
         }
         const messages = [{ role: 'user', content }];
         const requestBody = prepareImageRequest(
-          generateRequestBody(messages, 'gemini-3-pro-image', {}, null, token)
+          await generateRequestBody(messages, 'gemini-3-pro-image', {}, null, token)
         );
         return generateImageForSD(requestBody, token);
       },
