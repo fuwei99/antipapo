@@ -40,3 +40,24 @@ export async function downloadImage(url) {
         return null;
     }
 }
+
+/**
+ * 下载文本文件内容
+ * @param {string} url - 文本文件 URL
+ * @returns {Promise<string | null>}
+ */
+export async function downloadText(url) {
+    try {
+        const response = await axios.get(url, {
+            responseType: 'text',
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (antigravity)'
+            }
+        });
+        return response.data;
+    } catch (error) {
+        logger.error(`Failed to download text from ${url}: ${error.message}`);
+        return null;
+    }
+}
