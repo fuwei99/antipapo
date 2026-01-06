@@ -4,6 +4,7 @@ import config from '../config/config.js';
 import { getDefaultIp } from './utils.js';
 import { getImageDir, isPkg } from './paths.js';
 import { MIME_TO_EXT } from '../constants/index.js';
+import r2Uploader from './r2_uploader.js';
 
 const IMAGE_DIR = getImageDir();
 
@@ -37,18 +38,27 @@ function cleanOldImages(maxCount = 10) {
  * @param {string} mimeType - 图片 MIME 类型
  * @returns {string} 图片访问 URL
  */
-export function saveBase64Image(base64Data, mimeType) {
+export async function saveBase64Image(base64Data, mimeType) {
+  // 优先尝试上传到 R2
+  if (r2Uploader.isEnabled()) {
+    const r2Url = await r2Uploader.uploadImage(base64Data, mimeType);
+    if (r2Url) {
+      return r2Url;
+    }
+  }
+
+  // R2 未启用或上传失败，则保存到本地
   const ext = MIME_TO_EXT[mimeType] || 'jpg';
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${ext}`;
   const filepath = path.join(IMAGE_DIR, filename);
-  
+
   // 解码并保存
   const buffer = Buffer.from(base64Data, 'base64');
   fs.writeFileSync(filepath, buffer);
-  
+
   // 清理旧图片
   cleanOldImages(config.maxImages);
-  
+
   // 返回访问 URL
   const baseUrl = config.imageBaseUrl || `http://${getDefaultIp()}:${config.server.port}`;
   return `${baseUrl}/images/${filename}`;

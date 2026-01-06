@@ -29,109 +29,6 @@ const quotaCache = {
     }
 };
 
-const QUOTA_GROUPS = [
-    {
-        key: 'claude',
-        label: 'Claude',
-        iconSrc: '/assets/icons/claude.svg',
-        match: (modelId) => modelId.toLowerCase().includes('claude')
-    },
-    {
-        key: 'banana',
-        label: 'banana',
-        iconSrc: '/assets/icons/banana.svg',
-        match: (modelId) => modelId.toLowerCase().includes('gemini-3-pro-image')
-    },
-    {
-        key: 'gemini',
-        label: 'Gemini',
-        iconSrc: '/assets/icons/gemini.svg',
-        match: (modelId) => modelId.toLowerCase().includes('gemini') || modelId.toLowerCase().includes('publishers/google/')
-    },
-    {
-        key: 'other',
-        label: '其他',
-        iconSrc: '',
-        match: () => true
-    }
-];
-
-const QUOTA_SUMMARY_KEYS = ['claude', 'gemini', 'banana'];
-
-function getGroupIconHtml(group) {
-    const src = group?.iconSrc || '';
-    const alt = escapeHtml(group?.label || '');
-    const safeSrc = escapeHtml(src);
-    if (!safeSrc) return '';
-    return `<img class="quota-icon-img" src="${safeSrc}" alt="${alt}" loading="lazy" decoding="async">`;
-}
-
-function clamp01(value) {
-    const numberValue = Number(value);
-    if (!Number.isFinite(numberValue)) return 0;
-    return Math.min(1, Math.max(0, numberValue));
-}
-
-function toPercentage(fraction01) {
-    return clamp01(fraction01) * 100;
-}
-
-function formatPercentage(fraction01) {
-    return `${toPercentage(fraction01).toFixed(2)}%`;
-}
-
-function getBarColor(percentage) {
-    if (percentage > 50) return '#10b981';
-    if (percentage > 20) return '#f59e0b';
-    return '#ef4444';
-}
-
-function groupModels(models) {
-    const grouped = { claude: [], gemini: [], banana: [], other: [] };
-
-    Object.entries(models || {}).forEach(([modelId, quota]) => {
-        const groupKey = (QUOTA_GROUPS.find(g => g.match(modelId)) || QUOTA_GROUPS[QUOTA_GROUPS.length - 1]).key;
-        if (!grouped[groupKey]) grouped[groupKey] = [];
-        grouped[groupKey].push({ modelId, quota });
-    });
-
-    return grouped;
-}
-
-function summarizeGroup(items) {
-    if (!items || items.length === 0) {
-        return { percentage: 0, percentageText: '--', resetTime: '--' };
-    }
-
-    let minRemaining = 1;
-    let earliestResetMs = null;
-    let earliestResetText = null;
-
-    items.forEach(({ quota }) => {
-        const remaining = clamp01(quota?.remaining);
-        if (remaining < minRemaining) minRemaining = remaining;
-
-        const resetRaw = quota?.resetTimeRaw;
-        const resetText = quota?.resetTime;
-
-        if (resetRaw) {
-            const ms = Date.parse(resetRaw);
-            if (Number.isFinite(ms) && (earliestResetMs === null || ms < earliestResetMs)) {
-                earliestResetMs = ms;
-                earliestResetText = resetText || null;
-            }
-        } else if (!earliestResetText && resetText) {
-            earliestResetText = resetText;
-        }
-    });
-
-    return {
-        percentage: toPercentage(minRemaining),
-        percentageText: formatPercentage(minRemaining),
-        resetTime: earliestResetText || '--'
-    };
-}
-
 async function loadTokenQuotaSummary(refreshToken) {
     const cardId = refreshToken.substring(0, 8);
     const summaryEl = document.getElementById(`quota-summary-${cardId}`);
@@ -166,39 +63,33 @@ async function loadTokenQuotaSummary(refreshToken) {
 
 function renderQuotaSummary(summaryEl, quotaData) {
     const models = quotaData.models;
-    const modelEntries = Object.entries(models || {});
+    const modelEntries = Object.entries(models);
     
     if (modelEntries.length === 0) {
         summaryEl.textContent = '📊 暂无额度';
         return;
     }
     
-    const grouped = groupModels(models);
-    const groupByKey = Object.fromEntries(QUOTA_GROUPS.map(g => [g.key, g]));
-
-    const rowsHtml = QUOTA_SUMMARY_KEYS.map((groupKey) => {
-        const group = groupByKey[groupKey];
-        const summary = summarizeGroup(grouped[groupKey]);
-        const barColor = summary.percentageText === '--' ? '#9ca3af' : getBarColor(summary.percentage);
-        const safeResetTime = escapeHtml(summary.resetTime);
-        const resetText = safeResetTime === '--' ? '--' : `重置: ${safeResetTime}`;
-        const safeLabel = escapeHtml(group?.label || groupKey);
-        const title = `${group?.label || groupKey} - 重置: ${summary.resetTime}`;
-        return `
-            <div class="quota-summary-row" title="${escapeHtml(title)}">
-                <span class="quota-summary-icon">${getGroupIconHtml(group)}</span>
-                <span class="quota-summary-label">${safeLabel}</span>
-                <span class="quota-summary-bar"><span style="width:${summary.percentage}%;background:${barColor}"></span></span>
-                <span class="quota-summary-pct">${summary.percentageText}</span>
-                <span class="quota-summary-reset">${resetText}</span>
-            </div>
-        `;
-    }).join('');
-
+    let minModel = modelEntries[0][0];
+    let minQuota = modelEntries[0][1];
+    modelEntries.forEach(([modelId, quota]) => {
+        if (quota.remaining < minQuota.remaining) {
+            minQuota = quota;
+            minModel = modelId;
+        }
+    });
+    
+    const percentage = minQuota.remaining * 100;
+    const percentageText = `${percentage.toFixed(2)}%`;
+    const shortName = escapeHtml(minModel.replace('models/', '').replace('publishers/google/', '').split('/').pop());
+    const safeMinModel = escapeHtml(minModel);
+    const barColor = percentage > 50 ? '#10b981' : percentage > 20 ? '#f59e0b' : '#ef4444';
+    
     summaryEl.innerHTML = `
-        <div class="quota-summary-grid">
-            ${rowsHtml}
-        </div>
+        <span class="quota-summary-icon">📊</span>
+        <span class="quota-summary-model" title="${safeMinModel}">${shortName}</span>
+        <span class="quota-summary-bar"><span style="width:${percentage}%;background:${barColor}"></span></span>
+        <span class="quota-summary-pct">${percentageText}</span>
     `;
 }
 
@@ -251,7 +142,13 @@ async function loadQuotaDetail(cardId, refreshToken) {
                 return;
             }
             
-            const grouped = groupModels(models);
+            const grouped = { claude: [], gemini: [], other: [] };
+            modelEntries.forEach(([modelId, quota]) => {
+                const item = { modelId, quota };
+                if (modelId.toLowerCase().includes('claude')) grouped.claude.push(item);
+                else if (modelId.toLowerCase().includes('gemini')) grouped.gemini.push(item);
+                else grouped.other.push(item);
+            });
             
             let html = '<div class="quota-detail-grid">';
             
@@ -259,9 +156,9 @@ async function loadQuotaDetail(cardId, refreshToken) {
                 if (items.length === 0) return '';
                 let groupHtml = '';
                 items.forEach(({ modelId, quota }) => {
-                    const percentage = toPercentage(quota?.remaining);
-                    const percentageText = formatPercentage(quota?.remaining);
-                    const barColor = getBarColor(percentage);
+                    const percentage = quota.remaining * 100;
+                    const percentageText = `${percentage.toFixed(2)}%`;
+                    const barColor = percentage > 50 ? '#10b981' : percentage > 20 ? '#f59e0b' : '#ef4444';
                     const shortName = escapeHtml(modelId.replace('models/', '').replace('publishers/google/', '').split('/').pop());
                     const safeModelId = escapeHtml(modelId);
                     const safeResetTime = escapeHtml(quota.resetTime);
@@ -277,11 +174,9 @@ async function loadQuotaDetail(cardId, refreshToken) {
                 return groupHtml;
             };
             
-            const groupByKey = Object.fromEntries(QUOTA_GROUPS.map(g => [g.key, g]));
-            html += renderGroup(grouped.claude, getGroupIconHtml(groupByKey.claude));
-            html += renderGroup(grouped.gemini, getGroupIconHtml(groupByKey.gemini));
-            html += renderGroup(grouped.banana, getGroupIconHtml(groupByKey.banana));
-            html += renderGroup(grouped.other, '');
+            html += renderGroup(grouped.claude, '🤖');
+            html += renderGroup(grouped.gemini, '💎');
+            html += renderGroup(grouped.other, '🔧');
             html += '</div>';
             html += `<button class="btn btn-info btn-xs quota-refresh-btn" onclick="refreshInlineQuota('${escapeJs(cardId)}', '${escapeJs(refreshToken)}')">🔄 刷新额度</button>`;
             
@@ -350,8 +245,8 @@ async function showQuotaModal(refreshToken) {
                 <div class="quota-loading">加载中...</div>
             </div>
             <div class="modal-actions">
-                <button class="btn btn-secondary btn-sm" onclick="this.closest('.modal').remove()">关闭</button>
                 <button class="btn btn-info btn-sm" id="quotaRefreshBtn" onclick="refreshQuotaData()">🔄 刷新</button>
+                <button class="btn btn-secondary btn-sm" onclick="this.closest('.modal').remove()">关闭</button>
             </div>
         </div>
     `;
@@ -469,44 +364,29 @@ function renderQuotaModal(quotaContent, quotaData) {
         return;
     }
     
-    const grouped = groupModels(models);
+    const grouped = { claude: [], gemini: [], other: [] };
+    Object.entries(models).forEach(([modelId, quota]) => {
+        const item = { modelId, quota };
+        if (modelId.toLowerCase().includes('claude')) grouped.claude.push(item);
+        else if (modelId.toLowerCase().includes('gemini')) grouped.gemini.push(item);
+        else grouped.other.push(item);
+    });
     
     let html = '';
     
-    const renderGroup = (items, group) => {
-        const summary = summarizeGroup(items);
-        const safeLabel = escapeHtml(group.label);
-        const safeResetTime = escapeHtml(summary.resetTime);
-        const iconHtml = getGroupIconHtml(group);
-        let groupHtml = `
-            <div class="quota-group-title">
-                <span class="quota-group-left">
-                    <span class="quota-group-icon">${iconHtml}</span>
-                    <span class="quota-group-label">${safeLabel}</span>
-                </span>
-                <span class="quota-group-meta">${escapeHtml(summary.percentageText)} · 重置: ${safeResetTime}</span>
-            </div>
-        `;
-
-        if (items.length === 0) {
-            groupHtml += '<div class="quota-empty-small">暂无</div>';
-            return groupHtml;
-        }
-
-        groupHtml += '<div class="quota-grid">';
+    const renderGroup = (items, title) => {
+        if (items.length === 0) return '';
+        let groupHtml = `<div class="quota-group-title">${escapeHtml(title)}</div><div class="quota-grid">`;
         items.forEach(({ modelId, quota }) => {
-            const percentage = toPercentage(quota?.remaining);
-            const percentageText = formatPercentage(quota?.remaining);
-            const barColor = getBarColor(percentage);
+            const percentage = quota.remaining * 100;
+            const percentageText = `${percentage.toFixed(2)}%`;
+            const barColor = percentage > 50 ? '#10b981' : percentage > 20 ? '#f59e0b' : '#ef4444';
             const shortName = escapeHtml(modelId.replace('models/', '').replace('publishers/google/', ''));
             const safeModelId = escapeHtml(modelId);
             const safeResetTime = escapeHtml(quota.resetTime);
             groupHtml += `
                 <div class="quota-item">
-                    <div class="quota-model-name" title="${safeModelId}">
-                        <span class="quota-model-icon">${iconHtml}</span>
-                        <span class="quota-model-text">${shortName}</span>
-                    </div>
+                    <div class="quota-model-name" title="${safeModelId}">${shortName}</div>
                     <div class="quota-bar-container">
                         <div class="quota-bar" style="width: ${percentage}%; background: ${barColor};"></div>
                     </div>
@@ -521,13 +401,9 @@ function renderQuotaModal(quotaContent, quotaData) {
         return groupHtml;
     };
     
-    const groupByKey = Object.fromEntries(QUOTA_GROUPS.map(g => [g.key, g]));
-    html += renderGroup(grouped.claude, groupByKey.claude);
-    html += renderGroup(grouped.gemini, groupByKey.gemini);
-    html += renderGroup(grouped.banana, groupByKey.banana);
-    if (grouped.other && grouped.other.length > 0) {
-        html += renderGroup(grouped.other, groupByKey.other);
-    }
+    html += renderGroup(grouped.claude, '🤖 Claude');
+    html += renderGroup(grouped.gemini, '💎 Gemini');
+    html += renderGroup(grouped.other, '🔧 其他');
     
     quotaContent.innerHTML = html;
 }

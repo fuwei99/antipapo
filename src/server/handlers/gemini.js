@@ -29,7 +29,7 @@ import {
  */
 export const createGeminiResponse = (content, reasoning, reasoningSignature, toolCalls, finishReason, usage) => {
   const parts = [];
-  
+
   if (reasoning) {
     const thoughtPart = { text: reasoning, thought: true };
     if (reasoningSignature && config.passSignatureToClient) {
@@ -37,16 +37,11 @@ export const createGeminiResponse = (content, reasoning, reasoningSignature, too
     }
     parts.push(thoughtPart);
   }
-  
+
   if (content) {
-    const textPart = { text: content };
-    // 生图模型没有 thought part，但上游仍可能返回 thoughtSignature；透传时挂在文本 part 上
-    if (!reasoning && reasoningSignature && config.passSignatureToClient) {
-      textPart.thoughtSignature = reasoningSignature;
-    }
-    parts.push(textPart);
+    parts.push({ text: content });
   }
-  
+
   if (toolCalls && toolCalls.length > 0) {
     toolCalls.forEach(tc => {
       try {
@@ -84,7 +79,7 @@ export const createGeminiResponse = (content, reasoning, reasoningSignature, too
       totalTokenCount: usage.total_tokens
     };
   }
-  
+
   return response;
 };
 
@@ -135,7 +130,7 @@ export const handleGeminiModelDetail = async (req, res) => {
     const modelId = req.params.model.replace(/^models\//, '');
     const openaiModels = await getAvailableModels();
     const model = openaiModels.data.find(m => m.id === modelId);
-    
+
     if (model) {
       const geminiModel = {
         name: `models/${model.id}`,
@@ -169,19 +164,10 @@ export const handleGeminiModelDetail = async (req, res) => {
 export const handleGeminiRequest = async (req, res, modelName, isStream) => {
   const maxRetries = Number(config.retryTimes || 0);
   const safeRetries = maxRetries > 0 ? Math.floor(maxRetries) : 0;
-  
-  try {
-    const token = await tokenManager.getToken();
-    if (!token) {
-      throw new Error('没有可用的token，请运行 npm run login 获取token');
-    }
 
+  try {
     const isImageModel = modelName.includes('-image');
-    const requestBody = generateGeminiRequestBody(req.body, modelName, token);
-    
-    if (isImageModel) {
-      prepareImageRequest(requestBody);
-    }
+    // getToken 移动到 with429Retry 内部以支持重试换号
 
     if (isStream) {
       setStreamHeaders(res);
@@ -190,42 +176,61 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
       try {
         if (isImageModel) {
           // 生图模型：使用非流式获取结果后一次性返回
-          const { content, usage, reasoningSignature } = await with429Retry(
-            () => generateAssistantResponseNoStream(requestBody, token),
+          const { content, reasoningContent, reasoningSignature, usage } = await with429Retry(
+            async () => {
+              const token = await tokenManager.getToken();
+              if (!token) throw new Error('没有可用的token');
+              console.log(`[DEBUG] Gemini Stream Image Request Body Generation Start`);
+              const body = await generateGeminiRequestBody(req.body, modelName, token);
+              console.log(`[DEBUG] Gemini Stream Image Request Body Generation End`);
+              prepareImageRequest(body);
+              return generateAssistantResponseNoStream(body, token);
+            },
             safeRetries,
-            'gemini.stream.image '
+            'gemini.stream.image ',
+            () => tokenManager.forceRotate()
           );
-          const chunk = createGeminiResponse(content, null, reasoningSignature, null, 'STOP', usage);
+          const chunk = createGeminiResponse(content, reasoningContent, reasoningSignature, null, 'STOP', usage);
           writeStreamData(res, chunk);
           clearInterval(heartbeatTimer);
           endStream(res, false);
           return;
         }
-        
+
         let usageData = null;
         let hasToolCall = false;
 
         await with429Retry(
-          () => generateAssistantResponse(requestBody, token, (data) => {
-            if (data.type === 'usage') {
-              usageData = data.usage;
-            } else if (data.type === 'reasoning') {
-              // Gemini 思考内容
-              const chunk = createGeminiResponse(null, data.reasoning_content, data.thoughtSignature, null, null, null);
-              writeStreamData(res, chunk);
-            } else if (data.type === 'tool_calls') {
-              hasToolCall = true;
-              // Gemini 工具调用
-              const chunk = createGeminiResponse(null, null, null, data.tool_calls, null, null);
-              writeStreamData(res, chunk);
-            } else {
-              // 普通文本
-              const chunk = createGeminiResponse(data.content, null, null, null, null, null);
-              writeStreamData(res, chunk);
-            }
-          }),
+          async () => {
+            const token = await tokenManager.getToken();
+            if (!token) throw new Error('没有可用的token');
+            const body = await generateGeminiRequestBody(req.body, modelName, token);
+            return generateAssistantResponse(body, token, (data) => {
+              if (data.type === 'usage') {
+                usageData = data.usage;
+              } else if (data.type === 'reasoning') {
+                // Gemini 思考内容
+                const chunk = createGeminiResponse(null, data.reasoning_content, data.thoughtSignature, null, null, null);
+                writeStreamData(res, chunk);
+              } else if (data.type === 'tool_calls') {
+                hasToolCall = true;
+                // Gemini 工具调用
+                const chunk = createGeminiResponse(null, null, null, data.tool_calls, null, null);
+                writeStreamData(res, chunk);
+              } else if (data.type === 'content') {
+                // client.js 可能会发回特殊 content (如 SIG_URL)
+                const chunk = createGeminiResponse(data.content, null, null, null, null, null);
+                writeStreamData(res, chunk);
+              } else {
+                // 普通文本
+                const chunk = createGeminiResponse(data.content, null, data.thoughtSignature || null, null, null, null);
+                writeStreamData(res, chunk);
+              }
+            }, 0, modelName);
+          },
           safeRetries,
-          'gemini.stream '
+          'gemini.stream ',
+          () => tokenManager.forceRotate()
         );
 
         // 发送结束块和 usage
@@ -251,9 +256,18 @@ export const handleGeminiRequest = async (req, res, modelName, isStream) => {
       res.setTimeout(0);
 
       const { content, reasoningContent, reasoningSignature, toolCalls, usage } = await with429Retry(
-        () => generateAssistantResponseNoStream(requestBody, token),
+        async () => {
+          const token = await tokenManager.getToken();
+          if (!token) throw new Error('没有可用的token');
+          const body = await generateGeminiRequestBody(req.body, modelName, token);
+          if (isImageModel) {
+            prepareImageRequest(body);
+          }
+          return generateAssistantResponseNoStream(body, token, modelName);
+        },
         safeRetries,
-        'gemini.no_stream '
+        'gemini.no_stream ',
+        () => tokenManager.forceRotate()
       );
 
       const finishReason = toolCalls.length > 0 ? "STOP" : "STOP";

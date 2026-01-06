@@ -1,16 +1,17 @@
-// 工具名称映射缓存：按 model + safeName 维度
+// 工具名称映射缓存：按 sessionId + model + safeName 维度
 // 解决：发送到上游时工具名必须 sanitize，返回时需要还原为原始工具名
 
-import memoryManager from './memoryManager.js';
+import memoryManager, { MemoryPressure } from './memoryManager.js';
 
-// safeKey: `${model}::${safeName}` -> { originalName, ts }
+// safeKey: `${sessionId}::${model}::${safeName}` -> { originalName, ts }
 const toolNameMap = new Map();
 
-const MAX_ENTRIES = 16;
+const MAX_ENTRIES = 512;
 const ENTRY_TTL_MS = 30 * 60 * 1000;      // 30 分钟
+const CLEAN_INTERVAL_MS = 10 * 60 * 1000; // 每 10 分钟扫一遍
 
-function makeKey(model, safeName) {
-  return `${model || ''}::${safeName || ''}`;
+function makeKey(sessionId, model, safeName) {
+  return `${sessionId || ''}::${model || ''}::${safeName || ''}`;
 }
 
 function pruneSize(targetSize) {
@@ -33,23 +34,33 @@ function pruneExpired(now) {
   }
 }
 
-// 定时清理由 memoryManager 统一触发（避免每个模块单独 setInterval 扫描）
-memoryManager.registerCleanup(() => {
-  const now = Date.now();
-  pruneExpired(now);
-  pruneSize(MAX_ENTRIES);
+// 按内存压力收缩缓存
+memoryManager.registerCleanup((pressure) => {
+  if (pressure === MemoryPressure.MEDIUM) {
+    pruneSize(Math.floor(MAX_ENTRIES / 2));
+  } else if (pressure === MemoryPressure.HIGH) {
+    pruneSize(Math.floor(MAX_ENTRIES / 4));
+  } else if (pressure === MemoryPressure.CRITICAL) {
+    toolNameMap.clear();
+  }
 });
 
-export function setToolNameMapping(model, safeName, originalName) {
+// 定时按 TTL 清理
+setInterval(() => {
+  const now = Date.now();
+  pruneExpired(now);
+}).unref?.();
+
+export function setToolNameMapping(sessionId, model, safeName, originalName) {
   if (!safeName || !originalName || safeName === originalName) return;
-  const key = makeKey(model, safeName);
+  const key = makeKey(sessionId, model, safeName);
   toolNameMap.set(key, { originalName, ts: Date.now() });
   pruneSize(MAX_ENTRIES);
 }
 
-export function getOriginalToolName(model, safeName) {
+export function getOriginalToolName(sessionId, model, safeName) {
   if (!safeName) return null;
-  const key = makeKey(model, safeName);
+  const key = makeKey(sessionId, model, safeName);
   const entry = toolNameMap.get(key);
   if (!entry) return null;
   const now = Date.now();

@@ -25,11 +25,11 @@ export const createHeartbeat = (res) => {
       clearInterval(timer);
     }
   }, HEARTBEAT_INTERVAL);
-  
+
   // 响应结束时清理
   res.on('close', () => clearInterval(timer));
   res.on('finish', () => clearInterval(timer));
-  
+
   return timer;
 };
 
@@ -116,133 +116,15 @@ export const endStream = (res, isWriteDone = true) => {
 
 // ==================== 通用重试工具（处理 429） ====================
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function parseDurationToMs(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value));
-  if (typeof value !== 'string') return null;
-
-  const s = value.trim();
-  if (!s) return null;
-
-  // e.g. "295.285334ms"
-  const msMatch = s.match(/^(\d+(\.\d+)?)\s*ms$/i);
-  if (msMatch) return Math.max(0, Math.floor(Number(msMatch[1])));
-
-  // e.g. "0.295285334s"
-  const secMatch = s.match(/^(\d+(\.\d+)?)\s*s$/i);
-  if (secMatch) return Math.max(0, Math.floor(Number(secMatch[1]) * 1000));
-
-  // plain number in string: treat as ms
-  const num = Number(s);
-  if (Number.isFinite(num)) return Math.max(0, Math.floor(num));
-  return null;
-}
-
-function tryParseJson(value) {
-  if (!value) return null;
-  if (typeof value === 'object') return value;
-  if (typeof value !== 'string') return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    // Some messages embed JSON inside a string; try to salvage a JSON object substring.
-    const first = value.indexOf('{');
-    const last = value.lastIndexOf('}');
-    if (first !== -1 && last !== -1 && last > first) {
-      const sliced = value.slice(first, last + 1);
-      try {
-        return JSON.parse(sliced);
-      } catch {}
-    }
-    return null;
-  }
-}
-
-function extractUpstreamErrorBody(error) {
-  // UpstreamApiError created by createApiError(...) stores rawBody
-  if (error?.isUpstreamApiError && error.rawBody) {
-    return tryParseJson(error.rawBody) || error.rawBody;
-  }
-  // axios-like error
-  if (error?.response?.data) {
-    return tryParseJson(error.response.data) || error.response.data;
-  }
-  // fallback: try parse message
-  return tryParseJson(error?.message);
-}
-
-function getUpstreamRetryDelayMs(error) {
-  // Prefer explicit hints from upstream payload (RetryInfo/quotaResetDelay/quotaResetTimeStamp)
-  const body = extractUpstreamErrorBody(error);
-  const root = (body && typeof body === 'object') ? body : null;
-  const inner = root?.error || root;
-  const details = Array.isArray(inner?.details) ? inner.details : [];
-
-  let bestMs = null;
-  for (const d of details) {
-    if (!d || typeof d !== 'object') continue;
-
-    // google.rpc.RetryInfo: { retryDelay: "0.295285334s" }
-    const retryDelayMs = parseDurationToMs(d.retryDelay);
-    if (retryDelayMs !== null) bestMs = bestMs === null ? retryDelayMs : Math.max(bestMs, retryDelayMs);
-
-    // google.rpc.ErrorInfo metadata: { quotaResetDelay: "295.285334ms", quotaResetTimeStamp: "..." }
-    const meta = d.metadata && typeof d.metadata === 'object' ? d.metadata : null;
-    const quotaResetDelayMs = parseDurationToMs(meta?.quotaResetDelay);
-    if (quotaResetDelayMs !== null) bestMs = bestMs === null ? quotaResetDelayMs : Math.max(bestMs, quotaResetDelayMs);
-
-    const ts = meta?.quotaResetTimeStamp;
-    if (typeof ts === 'string') {
-      const t = Date.parse(ts);
-      if (Number.isFinite(t)) {
-        const deltaMs = Math.max(0, t - Date.now());
-        bestMs = bestMs === null ? deltaMs : Math.max(bestMs, deltaMs);
-      }
-    }
-  }
-
-  // If it's the capacity exhausted case, still retry but avoid hammering.
-  const reason = details.find(d => d?.reason)?.reason;
-  if (reason === 'MODEL_CAPACITY_EXHAUSTED') {
-    bestMs = bestMs === null ? 1000 : Math.max(bestMs, 1000);
-  }
-
-  return bestMs;
-}
-
-function computeBackoffMs(attempt, explicitDelayMs) {
-  // attempt starts from 0 for first call; on first retry attempt=1
-  const maxMs = 20_000;
-  const hasExplicit = Number.isFinite(explicitDelayMs) && explicitDelayMs !== null;
-  const baseMs = hasExplicit ? Math.max(0, Math.floor(explicitDelayMs)) : 500;
-  const exp = Math.min(maxMs, Math.floor(baseMs * Math.pow(2, Math.max(0, attempt - 1))));
-
-  // Add small jitter to spread bursts (±20%)
-  const jitterFactor = 0.8 + Math.random() * 0.4;
-  const expJittered = Math.max(0, Math.floor(exp * jitterFactor));
-
-  if (hasExplicit) {
-    // Add a small safety buffer to avoid retrying slightly too early
-    const buffered = Math.max(0, Math.floor(explicitDelayMs + 50));
-    return Math.min(maxMs, Math.max(expJittered, buffered));
-  }
-
-  // Fallback: at least 0.5s for the first retry
-  return Math.min(maxMs, Math.max(500, expJittered));
-}
-
 /**
  * 带 429 重试的执行器
  * @param {Function} fn - 要执行的异步函数，接收 attempt 参数
  * @param {number} maxRetries - 最大重试次数
  * @param {string} loggerPrefix - 日志前缀
+ * @param {Function} on429Callback - 遇到 429 时的回调函数
  * @returns {Promise<any>}
  */
-export const with429Retry = async (fn, maxRetries, loggerPrefix = '') => {
+export const with429Retry = async (fn, maxRetries, loggerPrefix = '', on429Callback = null) => {
   const retries = Number.isFinite(maxRetries) && maxRetries > 0 ? Math.floor(maxRetries) : 0;
   let attempt = 0;
   // 首次执行 + 最多 retries 次重试
@@ -254,13 +136,16 @@ export const with429Retry = async (fn, maxRetries, loggerPrefix = '') => {
       const status = Number(error.status || error.statusCode || error.response?.status);
       if (status === 429 && attempt < retries) {
         const nextAttempt = attempt + 1;
-        const explicitDelayMs = getUpstreamRetryDelayMs(error);
-        const waitMs = computeBackoffMs(nextAttempt, explicitDelayMs);
-        logger.warn(
-          `${loggerPrefix}收到 429，等待 ${waitMs}ms 后进行第 ${nextAttempt} 次重试（共 ${retries} 次）` +
-          (explicitDelayMs !== null ? `（上游提示≈${explicitDelayMs}ms）` : '')
-        );
-        await sleep(waitMs);
+        logger.warn(`${loggerPrefix}收到 429，${on429Callback ? '正在执行强制切号并' : '正在'}进行第 ${nextAttempt} 次重试（共 ${retries} 次）`);
+
+        if (typeof on429Callback === 'function') {
+          try {
+            await on429Callback();
+          } catch (e) {
+            logger.error('429 回调执行失败:', e.message);
+          }
+        }
+
         attempt = nextAttempt;
         continue;
       }

@@ -5,7 +5,6 @@ import quotaManager from '../auth/quota_manager.js';
 import oauthManager from '../auth/oauth_manager.js';
 import config, { getConfigJson, saveConfigJson } from '../config/config.js';
 import logger from '../utils/logger.js';
-import memoryManager from '../utils/memoryManager.js';
 import { parseEnvFile, updateEnvFile } from '../utils/envParser.js';
 import { reloadConfig } from '../utils/configReloader.js';
 import { deepMerge } from '../utils/deepMerge.js';
@@ -198,6 +197,7 @@ router.post('/tokens/reload', authMiddleware, async (req, res) => {
 router.post('/tokens/:refreshToken/refresh', authMiddleware, async (req, res) => {
   const { refreshToken } = req.params;
   try {
+    logger.info('正在刷新token...');
     const tokens = await tokenManager.getTokenList();
     const tokenData = tokens.find(t => t.refresh_token === refreshToken);
 
@@ -254,9 +254,6 @@ router.put('/config', authMiddleware, (req, res) => {
 
     dotenv.config({ override: true });
     reloadConfig();
-
-    // 应用可热更新的运行时配置
-    memoryManager.setCleanupInterval(config.server.memoryCleanupInterval);
 
     logger.info('配置已更新并热重载');
     res.json({ success: true, message: '配置已保存并生效（端口/HOST修改需重启）' });

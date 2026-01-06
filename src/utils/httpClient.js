@@ -48,14 +48,7 @@ function buildProxyConfig() {
 }
 
 // 为 axios 构建统一请求配置
-export function buildAxiosRequestConfig({
-  method = 'POST',
-  url,
-  headers,
-  data = null,
-  timeout = config.timeout,
-  responseType
-}) {
+export function buildAxiosRequestConfig({ method = 'POST', url, headers, data = null, timeout = config.timeout }) {
   const axiosConfig = {
     method,
     url,
@@ -66,7 +59,6 @@ export function buildAxiosRequestConfig({
     proxy: buildProxyConfig()
   };
 
-  if (responseType) axiosConfig.responseType = responseType;
   if (data !== null) axiosConfig.data = data;
   return axiosConfig;
 }

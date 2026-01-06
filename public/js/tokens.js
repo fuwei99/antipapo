@@ -87,13 +87,24 @@ function renderTokens(tokens) {
         return;
     }
 
+    // 收集需要自动刷新的过期 Token
+    const expiredTokensToRefresh = [];
+
     tokenList.innerHTML = filteredTokens.map((token, index) => {
+        const expireTime = new Date(token.timestamp + token.expires_in * 1000);
+        const isExpired = expireTime < new Date();
         const isRefreshing = refreshingTokens.has(token.refresh_token);
+        const expireStr = expireTime.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         const cardId = token.refresh_token.substring(0, 8);
 
         // 计算在原始列表中的序号（基于添加顺序）
         const originalIndex = cachedTokens.findIndex(t => t.refresh_token === token.refresh_token);
         const tokenNumber = originalIndex + 1;
+
+        // 如果已过期且启用状态，加入待刷新列表
+        if (isExpired && token.enable && !isRefreshing) {
+            expiredTokensToRefresh.push(token.refresh_token);
+        }
 
         // 转义所有用户数据防止 XSS
         const safeRefreshToken = escapeJs(token.refresh_token);
@@ -104,14 +115,11 @@ function renderTokens(tokens) {
         const safeEmailJs = escapeJs(token.email || '');
 
         return `
-        <div class="token-card ${!token.enable ? 'disabled' : ''} ${isRefreshing ? 'refreshing' : ''} ${skipAnimation ? 'no-animation' : ''}" id="card-${escapeHtml(cardId)}">
+        <div class="token-card ${!token.enable ? 'disabled' : ''} ${isExpired ? 'expired' : ''} ${isRefreshing ? 'refreshing' : ''} ${skipAnimation ? 'no-animation' : ''}" id="card-${escapeHtml(cardId)}">
             <div class="token-header">
-                <div class="token-header-left">
-                    <span class="status ${token.enable ? 'enabled' : 'disabled'}">
-                        ${token.enable ? '✅ 启用' : '❌ 禁用'}
-                    </span>
-                    <button class="btn-icon token-refresh-btn ${isRefreshing ? 'loading' : ''}" id="refresh-btn-${escapeHtml(cardId)}" onclick="manualRefreshToken('${safeRefreshToken}')" title="刷新Token" ${isRefreshing ? 'disabled' : ''}>🔄</button>
-                </div>
+                <span class="status ${token.enable ? 'enabled' : 'disabled'}">
+                    ${token.enable ? '✅ 启用' : '❌ 禁用'}
+                </span>
                 <div class="token-header-right">
                     <button class="btn-icon" onclick="showTokenDetail('${safeRefreshToken}')" title="编辑全部">✏️</button>
                     <span class="token-id">#${tokenNumber}</span>
@@ -131,6 +139,11 @@ function renderTokens(tokens) {
                     <span class="info-label">📧</span>
                     <span class="info-value sensitive-info">${safeEmail || '点击设置'}</span>
                     <span class="info-edit-icon">✏️</span>
+                </div>
+                <div class="info-row ${isExpired ? 'expired-text' : ''}" id="expire-row-${escapeHtml(cardId)}">
+                    <span class="info-label">⏰</span>
+                    <span class="info-value">${isRefreshing ? '🔄 刷新中...' : escapeHtml(expireStr)}${isExpired && !isRefreshing ? ' (已过期)' : ''}</span>
+                    <button class="btn-icon btn-refresh" onclick="manualRefreshToken('${safeRefreshToken}')" title="刷新Token" ${isRefreshing ? 'disabled' : ''}>🔄</button>
                 </div>
             </div>
             <div class="token-quota-inline" id="quota-inline-${escapeHtml(cardId)}">
@@ -158,6 +171,13 @@ function renderTokens(tokens) {
 
     // 重置动画跳过标志
     skipAnimation = false;
+
+    // 自动刷新过期的 Token
+    if (expiredTokensToRefresh.length > 0) {
+        expiredTokensToRefresh.forEach(refreshToken => {
+            autoRefreshToken(refreshToken);
+        });
+    }
 }
 
 // 手动刷新 Token
@@ -169,7 +189,7 @@ async function manualRefreshToken(refreshToken) {
     await autoRefreshToken(refreshToken);
 }
 
-// 刷新指定 Token（手动触发）
+// 自动刷新过期 Token
 async function autoRefreshToken(refreshToken) {
     if (refreshingTokens.has(refreshToken)) return;
 
@@ -178,15 +198,11 @@ async function autoRefreshToken(refreshToken) {
 
     // 更新 UI 显示刷新中状态
     const card = document.getElementById(`card-${cardId}`);
-    const refreshBtn = document.getElementById(`refresh-btn-${cardId}`);
-    if (card) {
-        card.classList.remove('refresh-failed');
-        card.classList.add('refreshing');
-    }
-    if (refreshBtn) {
-        refreshBtn.disabled = true;
-        refreshBtn.classList.add('loading');
-        refreshBtn.textContent = '🔄';
+    const expireRow = document.getElementById(`expire-row-${cardId}`);
+    if (card) card.classList.add('refreshing');
+    if (expireRow) {
+        const valueSpan = expireRow.querySelector('.info-value');
+        if (valueSpan) valueSpan.textContent = '🔄 刷新中...';
     }
 
     try {
@@ -200,25 +216,14 @@ async function autoRefreshToken(refreshToken) {
             showToast('Token 已自动刷新', 'success');
             // 刷新成功后重新加载列表
             refreshingTokens.delete(refreshToken);
-            if (card) card.classList.remove('refreshing');
-            if (refreshBtn) {
-                refreshBtn.disabled = false;
-                refreshBtn.classList.remove('loading');
-                refreshBtn.textContent = '🔄';
-            }
             loadTokens();
         } else {
             showToast(`Token 刷新失败: ${data.message || '未知错误'}`, 'error');
             refreshingTokens.delete(refreshToken);
             // 更新 UI 显示刷新失败
-            if (card) {
-                card.classList.remove('refreshing');
-                card.classList.add('refresh-failed');
-            }
-            if (refreshBtn) {
-                refreshBtn.disabled = false;
-                refreshBtn.classList.remove('loading');
-                refreshBtn.textContent = '🔄';
+            if (expireRow) {
+                const valueSpan = expireRow.querySelector('.info-value');
+                if (valueSpan) valueSpan.textContent = '❌ 刷新失败';
             }
         }
     } catch (error) {
@@ -227,14 +232,9 @@ async function autoRefreshToken(refreshToken) {
         }
         refreshingTokens.delete(refreshToken);
         // 更新 UI 显示刷新失败
-        if (card) {
-            card.classList.remove('refreshing');
-            card.classList.add('refresh-failed');
-        }
-        if (refreshBtn) {
-            refreshBtn.disabled = false;
-            refreshBtn.classList.remove('loading');
-            refreshBtn.textContent = '🔄';
+        if (expireRow) {
+            const valueSpan = expireRow.querySelector('.info-value');
+            if (valueSpan) valueSpan.textContent = '❌ 刷新失败';
         }
     }
 }
@@ -248,9 +248,9 @@ function showManualModal() {
             <div class="form-row">
                 <input type="text" id="modalAccessToken" placeholder="Access Token (必填)">
                 <input type="text" id="modalRefreshToken" placeholder="Refresh Token (必填)">
-                <input type="number" id="modalExpiresIn" placeholder="有效期(秒)" value="3599">
+                <input type="number" id="modalExpiresIn" placeholder="过期时间(秒)" value="3599">
             </div>
-            <p style="font-size: 0.8rem; color: var(--text-light); margin-bottom: 12px;">💡 有效期默认3599秒(约1小时)</p>
+            <p style="font-size: 0.8rem; color: var(--text-light); margin-bottom: 12px;">💡 过期时间默认3599秒(约1小时)</p>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
                 <button class="btn btn-success" onclick="addTokenFromModal()">✅ 添加</button>
@@ -386,7 +386,7 @@ function showTokenDetail(refreshToken) {
     const safeRefreshTokenJs = escapeJs(refreshToken);
     const safeProjectId = escapeHtml(token.projectId || '');
     const safeEmail = escapeHtml(token.email || '');
-    const updatedAtStr = escapeHtml(token.timestamp ? new Date(token.timestamp).toLocaleString('zh-CN') : '未知');
+    const expireTimeStr = escapeHtml(new Date(token.timestamp + token.expires_in * 1000).toLocaleString('zh-CN'));
 
     const modal = document.createElement('div');
     modal.className = 'modal form-modal';
@@ -410,8 +410,8 @@ function showTokenDetail(refreshToken) {
                 <input type="email" id="editEmail" value="${safeEmail}" placeholder="账号邮箱">
             </div>
             <div class="form-group compact">
-                <label>🕒 最后更新时间</label>
-                <input type="text" value="${updatedAtStr}" readonly style="background: var(--bg); cursor: not-allowed;">
+                <label>⏰ 过期时间</label>
+                <input type="text" value="${expireTimeStr}" readonly style="background: var(--bg); cursor: not-allowed;">
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
@@ -509,54 +509,42 @@ async function deleteToken(refreshToken) {
     }
 }
 
-// 导出 Tokens
-async function exportTokens() {
-    showLoading('正在导出...');
-    try {
-        const response = await authFetch('/admin/tokens', {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const data = await response.json();
-        hideLoading();
-
-        if (data.success) {
-            const tokensToExport = data.data.map(t => ({
-                access_token: t.access_token,
-                refresh_token: t.refresh_token,
-                expires_in: t.expires_in,
-                timestamp: t.timestamp,
-                enable: t.enable,
-                projectId: t.projectId,
-                email: t.email,
-                hasQuota: t.hasQuota
-            }));
-
-            const blob = new Blob([JSON.stringify(tokensToExport, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            a.download = `antipapo-tokens-${timestamp}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            showToast('导出成功', 'success');
-        } else {
-            showToast('导出失败: ' + (data.message || '未知错误'), 'error');
-        }
-    } catch (error) {
-        hideLoading();
-        showToast('导出失败: ' + error.message, 'error');
+// 导出 Token
+function exportTokens() {
+    if (!cachedTokens || cachedTokens.length === 0) {
+        showToast('暂无Token可导出', 'warning');
+        return;
     }
+
+    const dataToExport = cachedTokens.map(t => ({
+        access_token: t.access_token,
+        refresh_token: t.refresh_token,
+        expires_in: t.expires_in,
+        timestamp: t.timestamp,
+        enable: t.enable,
+        projectId: t.projectId,
+        email: t.email,
+        hasQuota: t.hasQuota
+    }));
+
+    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tokens_export_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Token已导出', 'success');
 }
 
-// 触发文件导入
+// 导入 Token
 function importTokens() {
     document.getElementById('importFile').click();
 }
 
-// 处理文件导入
 async function handleImportFile(input) {
     const file = input.files[0];
     if (!file) return;
@@ -564,41 +552,40 @@ async function handleImportFile(input) {
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
-            const tokens = JSON.parse(e.target.result);
-            if (!Array.isArray(tokens)) {
-                throw new Error('JSON文件格式不正确，根节点必须是数组');
-            }
+            const content = e.target.result;
+            const tokenArray = JSON.parse(content);
 
-            const confirmed = await showConfirm(`即将导入 ${tokens.length} 个Token，重复的Token将被忽略。是否继续？`, '导入确认');
-            if (!confirmed) {
-                input.value = ''; // 重置文件输入
+            if (!Array.isArray(tokenArray)) {
+                showToast('导入文件格式错误：必须是JSON数组', 'error');
                 return;
             }
 
-            showLoading('正在导入...');
+            showLoading('正在导入Token...');
+
             const response = await authFetch('/admin/tokens/batch', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${authToken}`
                 },
-                body: JSON.stringify(tokens)
+                body: JSON.stringify(tokenArray)
             });
 
-            const data = await response.json();
+            const result = await response.json();
             hideLoading();
 
-            if (data.success) {
-                showToast(`导入完成: 新增 ${data.added}, 忽略 ${data.ignored}`, 'success');
+            if (result.success) {
+                showToast(`导入完成：新增 ${result.added} 个，忽略 ${result.ignored} 个重复`, 'success');
                 loadTokens();
             } else {
-                showToast('导入失败: ' + (data.message || '未知错误'), 'error');
+                showToast(result.message || '导入失败', 'error');
             }
+
         } catch (error) {
             hideLoading();
-            showToast('导入失败: ' + error.message, 'error');
+            showToast('文件解析失败: ' + error.message, 'error');
         } finally {
-            input.value = ''; // 重置文件输入
+            input.value = '';
         }
     };
     reader.readAsText(file);

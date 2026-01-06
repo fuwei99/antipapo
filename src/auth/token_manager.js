@@ -145,7 +145,7 @@ class TokenManager {
       await this.refreshToken(token);
       return 'success';
     } catch (error) {
-      if (error.statusCode === 403 || error.statusCode === 400) {
+      if (error.statusCode === 403) {
         log.warn(`...${token.access_token?.slice(-8) || 'unknown'}: Token 已失效，将被禁用`);
         return 'disable';
       }
@@ -352,6 +352,27 @@ class TokenManager {
     }
   }
 
+  // 强制切换到下一个token
+  forceRotate() {
+    if (this.tokens.length <= 1) return;
+
+    const oldIndex = this.currentIndex;
+
+    if (this.rotationStrategy === RotationStrategy.QUOTA_EXHAUSTED) {
+      if (this.availableQuotaTokenIndices.length > 1) {
+        this.currentQuotaIndex = (this.currentQuotaIndex + 1) % this.availableQuotaTokenIndices.length;
+        this.currentIndex = this.availableQuotaTokenIndices[this.currentQuotaIndex];
+      } else {
+        // 如果 quota 列表没号了，说明都 429 了或没额度了，尝试轮询总列表
+        this.currentIndex = (this.currentIndex + 1) % this.tokens.length;
+      }
+    } else {
+      this.currentIndex = (this.currentIndex + 1) % this.tokens.length;
+    }
+
+    log.info(`[Auto-Rotate] 触发强制切号: ${oldIndex} -> ${this.currentIndex}`);
+  }
+
   // 恢复token额度（用于额度重置后）
   restoreQuota(token) {
     token.hasQuota = true;
@@ -400,7 +421,7 @@ class TokenManager {
    */
   _handleTokenError(error, token) {
     const suffix = token.access_token?.slice(-8) || 'unknown';
-    if (error.statusCode === 403 || error.statusCode === 400) {
+    if (error.statusCode === 403) {
       log.warn(`...${suffix}: Token 已失效或错误，已自动禁用该账号`);
       return 'disable';
     }
