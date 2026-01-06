@@ -2,6 +2,7 @@ import memoryManager, { registerMemoryPoolCleanup } from '../utils/memoryManager
 import { generateToolCallId } from '../utils/idGenerator.js';
 import { setReasoningSignature, setToolSignature } from '../utils/thoughtSignatureCache.js';
 import { getOriginalToolName } from '../utils/toolNameCache.js';
+import config from '../config/config.js';
 
 // 预编译的常量（避免重复创建字符串）
 const DATA_PREFIX = 'data: ';
@@ -14,24 +15,24 @@ class LineBuffer {
     this.buffer = '';
     this.lines = [];
   }
-
+  
   // 追加数据并返回完整的行
   append(chunk) {
     this.buffer += chunk;
     this.lines.length = 0; // 重用数组
-
+    
     let start = 0;
     let end;
     while ((end = this.buffer.indexOf('\n', start)) !== -1) {
       this.lines.push(this.buffer.slice(start, end));
       start = end + 1;
     }
-
+    
     // 保留未完成的部分
     this.buffer = start < this.buffer.length ? this.buffer.slice(start) : '';
     return this.lines;
   }
-
+  
   clear() {
     this.buffer = '';
     this.lines.length = 0;
@@ -76,8 +77,8 @@ function convertToToolCall(functionCall, sessionId, model) {
   const toolCall = getToolCallObject();
   toolCall.id = functionCall.id || generateToolCallId();
   let name = functionCall.name;
-  if (sessionId && model) {
-    const original = getOriginalToolName(sessionId, model, functionCall.name);
+  if (model) {
+    const original = getOriginalToolName(model, functionCall.name);
     if (original) name = original;
   }
   toolCall.function.name = name;
@@ -90,70 +91,57 @@ function convertToToolCall(functionCall, sessionId, model) {
 // 同时透传 thoughtSignature，方便客户端后续复用
 function parseAndEmitStreamChunk(line, state, callback) {
   if (!line.startsWith(DATA_PREFIX)) return;
-
+  
   try {
     const data = JSON.parse(line.slice(DATA_PREFIX_LEN));
     const parts = data.response?.candidates?.[0]?.content?.parts;
-
+    
     if (parts) {
       for (const part of parts) {
-        // 全局检测 thoughtSignature并更新状态
-        let currentPartSignature = null;
         if (part.thoughtSignature) {
-          state.reasoningSignature = part.thoughtSignature;
-          currentPartSignature = part.thoughtSignature;
-          if (state.sessionId && state.model) {
-            setReasoningSignature(state.sessionId, state.model, part.thoughtSignature);
+          // Gemini 等模型可能只在 functionCall part 上给出 thoughtSignature；
+          // 将其视为本轮“最新签名”，用于后续 functionCall 兜底与下次请求缓存。
+          if (part.thoughtSignature !== state.reasoningSignature) {
+            state.reasoningSignature = part.thoughtSignature;
+            if (state.sessionId && state.model && config.useCachedSignature) {
+              setReasoningSignature(state.sessionId, state.model, part.thoughtSignature);
+            }
           }
-          // 即使没有 text/thought，也应该触发一次回调以便 client.js 能捕获签名
-          // 但通常签名会附带在某种 content 上。
         }
 
         if (part.thought === true) {
+          if (part.thoughtSignature) {
+            state.reasoningSignature = part.thoughtSignature;
+            if (state.sessionId && state.model) {
+              //console.log("服务器传入的签名："+state.reasoningSignature);
+              if (config.useCachedSignature) {
+                setReasoningSignature(state.sessionId, state.model, part.thoughtSignature);
+              }
+            }
+          }
           callback({
             type: 'reasoning',
             reasoning_content: part.text || '',
-            thoughtSignature: currentPartSignature || state.reasoningSignature || null
+            thoughtSignature: part.thoughtSignature || state.reasoningSignature || null
           });
         } else if (part.text !== undefined) {
-          callback({
-            type: 'text',
-            content: part.text,
-            thoughtSignature: currentPartSignature // 传递签名给 text 类型
-          });
+          callback({ type: 'text', content: part.text });
         } else if (part.functionCall) {
           const toolCall = convertToToolCall(part.functionCall, state.sessionId, state.model);
-          if (part.thoughtSignature) {
-            toolCall.thoughtSignature = part.thoughtSignature;
+          const sig = part.thoughtSignature || state.reasoningSignature || null;
+          if (sig) {
+            toolCall.thoughtSignature = sig;
             if (state.sessionId && state.model) {
-              setToolSignature(state.sessionId, state.model, part.thoughtSignature);
+              if (config.useCachedSignature) {
+                setToolSignature(state.sessionId, state.model, sig);
+              }
             }
           }
           state.toolCalls.push(toolCall);
-        } else if (part.inlineData) {
-          // Detected inline image data
-          callback({
-            type: 'image_data',
-            data: part.inlineData.data,
-            mimeType: part.inlineData.mimeType,
-            thoughtSignature: currentPartSignature // 传递签名给 image 类型
-          });
-        }
-
-        // 如果只有签名而没有任何 content 类型匹配 (罕见情况)，我们可以发一个特殊的 event?
-        // 目前 client.js 里只处理 text, reasoning, image_data 的回调用于上传。
-        // 如果签名单独作为一个 part (不带 text/thought/inlineData)，上面的逻辑会漏掉吗？
-        // 假设 part 至少有一个 key. 如果只有 thoughtSignature? 
-        // 应该加一个兜底。
-        if (currentPartSignature && !part.text && !part.thought && !part.functionCall && !part.inlineData) {
-          callback({
-            type: 'signature_only',
-            thoughtSignature: currentPartSignature
-          });
         }
       }
     }
-
+    
     if (data.response?.candidates?.[0]?.finishReason) {
       if (state.toolCalls.length > 0) {
         callback({ type: 'tool_calls', tool_calls: state.toolCalls });

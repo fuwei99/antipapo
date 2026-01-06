@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { log } from '../utils/logger.js';
-import memoryManager, { MemoryPressure } from '../utils/memoryManager.js';
 import { getDataDir } from '../utils/paths.js';
 import { QUOTA_CACHE_TTL, QUOTA_CLEANUP_INTERVAL } from '../constants/index.js';
 
@@ -19,7 +18,6 @@ class QuotaManager {
     this.ensureFileExists();
     this.loadFromFile();
     this.startCleanupTimer();
-    this.registerMemoryCleanup();
   }
 
   ensureFileExists() {
@@ -109,24 +107,6 @@ class QuotaManager {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-  }
-
-  // 注册内存清理回调
-  registerMemoryCleanup() {
-    memoryManager.registerCleanup((pressure) => {
-      // 根据压力级别调整缓存 TTL
-      if (pressure === MemoryPressure.CRITICAL) {
-        // 紧急时清理所有缓存
-        const size = this.cache.size;
-        if (size > 0) {
-          this.cache.clear();
-          log.info(`紧急清理 ${size} 个额度缓存`);
-        }
-      } else if (pressure === MemoryPressure.HIGH) {
-        // 高压力时清理过期缓存
-        this.cleanup();
-      }
-    });
   }
 
   convertToBeijingTime(utcTimeStr) {

@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Token 管理</title>
     <!-- 防止页面闪烁：在渲染前根据登录状态和Tab状态设置初始显示 -->
     <script>
-        (function() {
+        (function () {
             var isLoggedIn = localStorage.getItem('authToken');
             var currentTab = localStorage.getItem('currentTab') || 'tokens';
             var classes = ['auth-ready'];
@@ -15,36 +16,55 @@
             document.documentElement.className = classes.join(' ');
             // 检测字体加载
             if ('fonts' in document) {
-                document.fonts.ready.then(function() {
+                document.fonts.ready.then(function () {
                     document.documentElement.classList.add('fonts-loaded');
                 });
             } else {
                 // 后备方案：延迟添加
-                setTimeout(function() {
+                setTimeout(function () {
                     document.documentElement.classList.add('fonts-loaded');
                 }, 1000);
             }
         })();
     </script>
     <style>
-/* 防止闪烁的关键样式 - 来自 binary-build */
-html:not(.auth-ready) #loginForm,
-html:not(.auth-ready) #mainContent { visibility: hidden; }
-/* 登录状态显示控制 - 合并两个分支 */
-.logged-in #loginForm { display: none !important; }
-.logged-in #mainContent { display: flex !important; }
-html:not(.logged-in) #mainContent { display: none !important; }
-/* Tab状态管理 - 来自 binary-build */
-html.tab-settings #tokensPage { display: none !important; }
-html.tab-settings #settingsPage { display: block !important; }
-html.tab-settings .tab[data-tab="tokens"] { 
-    background: transparent !important;
-    color: var(--text-light, #888) !important; 
-}
-html.tab-settings .tab[data-tab="settings"] { 
-    background: var(--primary, #4f46e5) !important; 
-    color: white !important; 
-}
+        /* 防止闪烁的关键样式 - 来自 binary-build */
+        html:not(.auth-ready) #loginForm,
+        html:not(.auth-ready) #mainContent {
+            visibility: hidden;
+        }
+
+        /* 登录状态显示控制 - 合并两个分支 */
+        .logged-in #loginForm {
+            display: none !important;
+        }
+
+        .logged-in #mainContent {
+            display: flex !important;
+        }
+
+        html:not(.logged-in) #mainContent {
+            display: none !important;
+        }
+
+        /* Tab状态管理 - 来自 binary-build */
+        html.tab-settings #tokensPage {
+            display: none !important;
+        }
+
+        html.tab-settings #settingsPage {
+            display: block !important;
+        }
+
+        html.tab-settings .tab[data-tab="tokens"] {
+            background: transparent !important;
+            color: var(--text-light, #888) !important;
+        }
+
+        html.tab-settings .tab[data-tab="settings"] {
+            background: var(--primary, #4f46e5) !important;
+            color: white !important;
+        }
     </style>
     <!-- 主样式表 - 优先加载 -->
     <link rel="stylesheet" href="style.css">
@@ -53,13 +73,18 @@ html.tab-settings .tab[data-tab="settings"] {
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- 字体异步加载 - 不阻塞渲染 -->
-    <link rel="stylesheet" href="https://font.sec.miui.com/font/css?family=MiSans:400,500,600,700:Chinese_Simplify,Latin&display=swap" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:wght@400;700&display=swap" media="print" onload="this.media='all'">
+    <link rel="stylesheet"
+        href="https://font.sec.miui.com/font/css?family=MiSans:400,500,600,700:Chinese_Simplify,Latin&display=swap"
+        media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:wght@400;700&display=swap"
+        media="print" onload="this.media='all'">
     <noscript>
-        <link rel="stylesheet" href="https://font.sec.miui.com/font/css?family=MiSans:400,500,600,700:Chinese_Simplify,Latin&display=swap">
+        <link rel="stylesheet"
+            href="https://font.sec.miui.com/font/css?family=MiSans:400,500,600,700:Chinese_Simplify,Latin&display=swap">
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:wght@400;700&display=swap">
     </noscript>
 </head>
+
 <body>
     <div class="container">
         <!-- 登录表单 -->
@@ -81,10 +106,10 @@ html.tab-settings .tab[data-tab="settings"] {
         <!-- 主内容 -->
         <div id="mainContent" class="main-content hidden">
             <div class="header">
-            <div class="tabs">
-                <button class="tab active" data-tab="tokens" onclick="switchTab('tokens')">🎯 Token</button>
-                <button class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ 设置</button>
-            </div>
+                <div class="tabs">
+                    <button class="tab active" data-tab="tokens" onclick="switchTab('tokens')">🎯 Token</button>
+                    <button class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ 设置</button>
+                </div>
                 <div class="header-right">
                     <button onclick="logout()">🚪 退出</button>
                 </div>
@@ -112,11 +137,14 @@ html.tab-settings .tab[data-tab="settings"] {
                             <button type="button" onclick="exportTokens()" class="btn btn-info btn-sm">📤 导出</button>
                             <button type="button" onclick="importTokens()" class="btn btn-info btn-sm">📥 导入</button>
                             <input type="file" id="importFile" hidden accept=".json" onchange="handleImportFile(this)">
-                            
-                            <button type="button" onclick="showOAuthModal()" class="btn btn-success btn-sm">🔐 OAuth</button>
-                            <button type="button" onclick="showManualModal()" class="btn btn-secondary btn-sm">✏️ 手动</button>
+
+                            <button type="button" onclick="showOAuthModal()" class="btn btn-success btn-sm">🔐
+                                OAuth</button>
+                            <button type="button" onclick="showManualModal()" class="btn btn-secondary btn-sm">✏️
+                                手动</button>
                             <button type="button" onclick="loadTokens()" class="btn btn-warning btn-sm">🔄 刷新</button>
-                            <button type="button" onclick="toggleSensitiveInfo()" class="btn btn-sm" id="toggleSensitiveBtn" title="隐藏/显示敏感信息">👁️ 显示</button>
+                            <button type="button" onclick="toggleSensitiveInfo()" class="btn btn-sm"
+                                id="toggleSensitiveBtn" title="隐藏/显示敏感信息">👁️ 显示</button>
                         </div>
                     </div>
 
@@ -133,161 +161,227 @@ html.tab-settings .tab[data-tab="settings"] {
                 <!-- 设置页面 -->
                 <div id="settingsPage" class="hidden">
                     <form id="configForm" class="config-form">
-                        <div class="config-grid">
-                            <!-- 服务器配置 -->
-                            <div class="config-section">
-                                <h4>🖥️ 服务器</h4>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>端口</label>
-                                        <input type="number" name="PORT" placeholder="8045">
+                        <div class="settings-layout">
+                            <aside class="settings-nav">
+                                <div class="settings-search">
+                                    <input type="text" id="settingsSearch" placeholder="搜索设置..."
+                                        oninput="filterSettings(this.value)">
+                                </div>
+                                <select class="settings-section-select" id="settingsSectionSelect"
+                                    onchange="setActiveSettingSection(this.value, true)">
+                                    <option value="section-server">🖥️ 服务器</option>
+                                    <option value="section-model">🎛️ 模型参数</option>
+                                    <option value="section-rotation">🔄 轮询与性能</option>
+                                </select>
+                                <div class="settings-nav-list">
+                                    <button type="button" class="settings-nav-item" data-target="section-server"
+                                        onclick="setActiveSettingSection('section-server', true)">🖥️ 服务器</button>
+                                    <button type="button" class="settings-nav-item" data-target="section-model"
+                                        onclick="setActiveSettingSection('section-model', true)">🎛️ 模型参数</button>
+                                    <button type="button" class="settings-nav-item" data-target="section-rotation"
+                                        onclick="setActiveSettingSection('section-rotation', true)">🔄 轮询与性能</button>
+                                </div>
+                            </aside>
+                            <div class="settings-content">
+                                <div class="config-grid">
+                                    <!-- 服务器配置 -->
+                                    <div class="config-section" id="section-server">
+                                        <h4>🖥️ 服务器</h4>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>端口</label>
+                                                <input type="number" name="PORT" placeholder="8045">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>监听地址</label>
+                                                <input type="text" name="HOST" placeholder="0.0.0.0">
+                                            </div>
+                                        </div>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>最大请求大小</label>
+                                                <input type="text" name="MAX_REQUEST_SIZE" placeholder="500mb">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>API密钥</label>
+                                                <input type="password" name="API_KEY" placeholder="留空则不验证">
+                                            </div>
+                                        </div>
+                                        <div class="form-row-inline switch-row">
+                                            <div class="form-group compact switch-group">
+                                                <label>跳过验证 <span class="help-tip"
+                                                        data-tooltip="跳过ProjectId获取，直接随机生成（仅Pro账号）">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="SKIP_PROJECT_ID_FETCH">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group compact switch-group">
+                                                <label>原生Axios <span class="help-tip"
+                                                        data-tooltip="使用原生axios而非TLS指纹请求器">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="USE_NATIVE_AXIOS">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label>图片访问链接</label>
+                                            <input type="text" name="IMAGE_BASE_URL"
+                                                placeholder="https://your-domain.zeabur.app">
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label>代理地址</label>
+                                            <input type="text" name="PROXY" placeholder="http://127.0.0.1:7890">
+                                        </div>
                                     </div>
-                                    <div class="form-group compact">
-                                        <label>监听地址</label>
-                                        <input type="text" name="HOST" placeholder="0.0.0.0">
+
+                                    <!-- 模型默认参数 -->
+                                    <div class="config-section" id="section-model">
+                                        <h4>🎛️ 模型参数</h4>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>温度</label>
+                                                <input type="number" step="0.1" name="DEFAULT_TEMPERATURE"
+                                                    placeholder="1">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>Top P</label>
+                                                <input type="number" step="0.01" name="DEFAULT_TOP_P" placeholder="1">
+                                            </div>
+                                        </div>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>Top K</label>
+                                                <input type="number" name="DEFAULT_TOP_K" placeholder="50">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>最大Token</label>
+                                                <input type="number" name="DEFAULT_MAX_TOKENS" placeholder="32000">
+                                            </div>
+                                        </div>
+                                        <div class="form-group compact highlight">
+                                            <label>思考预算 <span class="help-tip"
+                                                    data-tooltip="思考模型的思考token预算，影响推理深度">?</span></label>
+                                            <input type="number" name="DEFAULT_THINKING_BUDGET" placeholder="16000">
+                                        </div>
+                                        <div class="form-row-inline switch-row">
+                                            <div class="form-group compact switch-group">
+                                                <label>上下文System <span class="help-tip"
+                                                        data-tooltip="合并开头连续的system消息到SystemInstruction">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="USE_CONTEXT_SYSTEM_PROMPT">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label>系统提示词</label>
+                                            <textarea name="SYSTEM_INSTRUCTION" rows="3"
+                                                placeholder="可选的系统提示词"></textarea>
+                                        </div>
+                                    </div>
+
+                                    <!-- 轮询策略与性能优化 -->
+                                    <div class="config-section" id="section-rotation">
+                                        <h4>🔄 轮询与性能</h4>
+                                        <div class="form-row-inline switch-row">
+                                            <div class="form-group compact switch-group">
+                                                <label>透传签名 <span class="help-tip"
+                                                        data-tooltip="将响应中的thoughtSignature透传到客户端">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="PASS_SIGNATURE_TO_CLIENT">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group compact switch-group">
+                                                <label>缓存签名 <span class="help-tip"
+                                                        data-tooltip="将上游返回的签名缓存并自动补全到后续请求">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="USE_CACHED_SIGNATURE" checked>
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group compact switch-group">
+                                                <label>兜底签名 <span class="help-tip"
+                                                        data-tooltip="没有缓存签名时，使用内置默认签名自动补全">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="USE_FALLBACK_SIGNATURE" checked>
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group compact switch-group">
+                                                <label>仅工具签名缓存 <span class="help-tip"
+                                                        data-tooltip="仅在有工具调用时缓存和补全工具签名">?</span></label>
+                                                <label class="switch">
+                                                    <input type="checkbox" name="CACHE_ONLY_TOOL_SIGNATURES">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>策略模式 <span class="help-tip"
+                                                        data-tooltip="均衡负载：每次请求切换Token&#10;额度耗尽：用完额度才切换&#10;自定义次数：指定次数后切换">?</span></label>
+                                                <select name="ROTATION_STRATEGY" id="rotationStrategy"
+                                                    onchange="toggleRequestCountInput()">
+                                                    <option value="round_robin">均衡负载</option>
+                                                    <option value="quota_exhausted">额度耗尽切换</option>
+                                                    <option value="request_count">自定义次数</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group compact" id="requestCountGroup">
+                                                <label>每Token请求次数 <span class="help-tip"
+                                                        data-tooltip="自定义次数模式下，每个Token处理多少次请求后切换">?</span></label>
+                                                <input type="number" name="ROTATION_REQUEST_COUNT" min="1"
+                                                    placeholder="10">
+                                            </div>
+                                        </div>
+                                        <div class="rotation-status" id="rotationStatus">
+                                            <span class="rotation-label">当前状态:</span>
+                                            <span id="currentRotationInfo">加载中...</span>
+                                        </div>
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>超时(ms)</label>
+                                                <input type="number" name="TIMEOUT" placeholder="300000">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>429重试次数</label>
+                                                <input type="number" name="RETRY_TIMES" placeholder="0">
+                                            </div>
+                                        </div>
+
+                                        <div class="form-row-inline">
+                                            <div class="form-group compact">
+                                                <label>心跳间隔(ms) <span class="help-tip"
+                                                        data-tooltip="SSE心跳间隔，防止CF超时断连">?</span></label>
+                                                <input type="number" name="HEARTBEAT_INTERVAL" placeholder="15000">
+                                            </div>
+                                            <div class="form-group compact">
+                                                <label>内存清理间隔(ms) <span class="help-tip"
+                                                        data-tooltip="按固定间隔触发缓存/对象池清理">?</span></label>
+                                                <input type="number" name="MEMORY_CLEANUP_INTERVAL"
+                                                    placeholder="1800000">
+                                            </div>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label>🔤 界面字体大小 (px)</label>
+                                            <div class="font-size-control">
+                                                <input type="range" id="fontSizeRange" min="10" max="24" value="18"
+                                                    oninput="changeFontSize(this.value)">
+                                                <input type="number" id="fontSizeInput" min="10" max="24" value="18"
+                                                    onchange="changeFontSize(this.value)" style="width: 60px;">
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>最大请求大小</label>
-                                        <input type="text" name="MAX_REQUEST_SIZE" placeholder="500mb">
-                                    </div>
-                                    <div class="form-group compact">
-                                        <label>API密钥</label>
-                                        <input type="password" name="API_KEY" placeholder="留空则不验证">
-                                    </div>
-                                </div>
-                                <div class="form-row-inline switch-row">
-                                    <div class="form-group compact switch-group">
-                                        <label>跳过验证 <span class="help-tip" data-tooltip="跳过ProjectId获取，直接随机生成（仅Pro账号）">?</span></label>
-                                        <label class="switch">
-                                            <input type="checkbox" name="SKIP_PROJECT_ID_FETCH">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                    <div class="form-group compact switch-group">
-                                        <label>原生Axios <span class="help-tip" data-tooltip="使用原生axios而非TLS指纹请求器">?</span></label>
-                                        <label class="switch">
-                                            <input type="checkbox" name="USE_NATIVE_AXIOS">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="form-group compact">
-                                    <label>图片访问链接</label>
-                                    <input type="text" name="IMAGE_BASE_URL" placeholder="https://your-domain.zeabur.app">
-                                </div>
-                                <div class="form-group compact">
-                                    <label>代理地址</label>
-                                    <input type="text" name="PROXY" placeholder="http://127.0.0.1:7890">
+                                <div class="config-actions">
+                                    <button type="button" onclick="loadConfig()" class="btn btn-secondary">🔄
+                                        重新加载</button>
+                                    <button type="submit" class="btn btn-success">💾 保存配置</button>
                                 </div>
                             </div>
-
-                            <!-- 模型默认参数 -->
-                            <div class="config-section">
-                                <h4>🎛️ 模型参数</h4>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>温度</label>
-                                        <input type="number" step="0.1" name="DEFAULT_TEMPERATURE" placeholder="1">
-                                    </div>
-                                    <div class="form-group compact">
-                                        <label>Top P</label>
-                                        <input type="number" step="0.01" name="DEFAULT_TOP_P" placeholder="1">
-                                    </div>
-                                </div>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>Top K</label>
-                                        <input type="number" name="DEFAULT_TOP_K" placeholder="50">
-                                    </div>
-                                    <div class="form-group compact">
-                                        <label>最大Token</label>
-                                        <input type="number" name="DEFAULT_MAX_TOKENS" placeholder="32000">
-                                    </div>
-                                </div>
-                                <div class="form-group compact highlight">
-                                    <label>思考预算 <span class="help-tip" data-tooltip="思考模型的思考token预算，影响推理深度">?</span></label>
-                                    <input type="number" name="DEFAULT_THINKING_BUDGET" placeholder="16000">
-                                </div>
-                                <div class="form-row-inline switch-row">
-                                    <div class="form-group compact switch-group">
-                                        <label>上下文System <span class="help-tip" data-tooltip="合并开头连续的system消息到SystemInstruction">?</span></label>
-                                        <label class="switch">
-                                            <input type="checkbox" name="USE_CONTEXT_SYSTEM_PROMPT">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="form-group compact">
-                                    <label>系统提示词</label>
-                                    <textarea name="SYSTEM_INSTRUCTION" rows="3" placeholder="可选的系统提示词"></textarea>
-                                </div>
-                            </div>
-
-                            <!-- 轮询策略与性能优化 -->
-                            <div class="config-section">
-                                <h4>🔄 轮询与性能</h4>
-                                <div class="form-row-inline switch-row">
-                                    <div class="form-group compact switch-group">
-                                        <label>透传签名 <span class="help-tip" data-tooltip="将响应中的thoughtSignature透传到客户端">?</span></label>
-                                        <label class="switch">
-                                            <input type="checkbox" name="PASS_SIGNATURE_TO_CLIENT">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>策略模式 <span class="help-tip" data-tooltip="均衡负载：每次请求切换Token&#10;额度耗尽：用完额度才切换&#10;自定义次数：指定次数后切换">?</span></label>
-                                        <select name="ROTATION_STRATEGY" id="rotationStrategy" onchange="toggleRequestCountInput()">
-                                            <option value="round_robin">均衡负载</option>
-                                            <option value="quota_exhausted">额度耗尽切换</option>
-                                            <option value="request_count">自定义次数</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group compact" id="requestCountGroup">
-                                        <label>每Token请求次数 <span class="help-tip" data-tooltip="自定义次数模式下，每个Token处理多少次请求后切换">?</span></label>
-                                        <input type="number" name="ROTATION_REQUEST_COUNT" min="1" placeholder="10">
-                                    </div>
-                                </div>
-                                <div class="rotation-status" id="rotationStatus">
-                                    <span class="rotation-label">当前状态:</span>
-                                    <span id="currentRotationInfo">加载中...</span>
-                                </div>
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>超时(ms)</label>
-                                        <input type="number" name="TIMEOUT" placeholder="300000">
-                                    </div>
-                                    <div class="form-group compact">
-                                        <label>429重试次数</label>
-                                        <input type="number" name="RETRY_TIMES" placeholder="0">
-                                    </div>
-                                </div>
-
-                                <div class="form-row-inline">
-                                    <div class="form-group compact">
-                                        <label>心跳间隔(ms) <span class="help-tip" data-tooltip="SSE心跳间隔，防止CF超时断连">?</span></label>
-                                        <input type="number" name="HEARTBEAT_INTERVAL" placeholder="15000">
-                                    </div>
-                                    <div class="form-group compact">
-                                        <label>内存阈值(MB) <span class="help-tip" data-tooltip="超过此值触发GC清理">?</span></label>
-                                        <input type="number" name="MEMORY_THRESHOLD" placeholder="100">
-                                    </div>
-                                </div>
-                                <div class="form-group compact">
-                                    <label>🔤 界面字体大小 (px)</label>
-                                    <div class="font-size-control">
-                                        <input type="range" id="fontSizeRange" min="10" max="24" value="18" oninput="changeFontSize(this.value)">
-                                        <input type="number" id="fontSizeInput" min="10" max="24" value="18" onchange="changeFontSize(this.value)" style="width: 60px;">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="config-actions">
-                            <button type="submit" class="btn btn-success">💾 保存配置</button>
-                            <button type="button" onclick="loadConfig()" class="btn btn-secondary">🔄 重新加载</button>
                         </div>
                     </form>
                 </div>
@@ -304,4 +398,5 @@ html.tab-settings .tab[data-tab="settings"] {
     <script src="js/config.js" defer></script>
     <script src="js/main.js" defer></script>
 </body>
+
 </html>

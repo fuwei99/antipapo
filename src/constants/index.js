@@ -37,24 +37,12 @@ export const MODEL_LIST_CACHE_TTL = 60 * 60 * 1000;
 
 // ==================== 内存管理常量 ====================
 
-// 注意：内存压力阈值现在由 memoryManager 根据用户配置的 memoryThreshold 动态计算
-// 用户配置的 memoryThreshold（MB）即为高压力阈值，其他阈值按比例计算：
-// - LOW: 30% 阈值
-// - MEDIUM: 60% 阈值
-// - HIGH: 100% 阈值（用户配置值）
-// - TARGET: 50% 阈值
-
 /**
- * GC 冷却时间（毫秒）
+ * 默认内存清理间隔（毫秒）
+ * 在该间隔内，即使处于 MEDIUM/HIGH，也不会重复触发清理回调，避免频繁扫描与释放带来的性能损耗。
  * @type {number}
  */
-export const GC_COOLDOWN = 10000;
-
-/**
- * 默认内存检查间隔（毫秒）
- * @type {number}
- */
-export const MEMORY_CHECK_INTERVAL = 30000;
+export const MEMORY_CLEANUP_INTERVAL = 30 * 60 * 1000;
 
 // ==================== 服务器相关常量 ====================
 

@@ -15,8 +15,8 @@ function convertSingleTool(name, description, parameters, sessionId, actualModel
   const originalName = name;
   const safeName = sanitizeToolName(originalName);
   
-  if (sessionId && actualModelName && safeName !== originalName) {
-    setToolNameMapping(sessionId, actualModelName, safeName, originalName);
+  if (actualModelName && safeName !== originalName) {
+    setToolNameMapping(actualModelName, safeName, originalName);
   }
   
   const rawParams = parameters || {};

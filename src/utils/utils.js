@@ -54,8 +54,54 @@ export function cleanParameters(obj) {
   return cleaned;
 }
 
-// ==================== 模型映射 ====================
+// ==================== Model Mapping ====================
+// Map Anthropic official model names to Antigravity model names
+// Supports Claude Code and other clients that use official Anthropic model naming
 export function modelMapping(modelName) {
+  // Dynamic matching for Anthropic official model name formats:
+  // - claude-{type}-{major}-{minor}-{date} (e.g., claude-sonnet-4-5-20250929)
+  // - claude-{type}-{major}-{date} (e.g., claude-sonnet-4-20250514)
+  // - claude-{major}-{minor}-{type}-{date} (e.g., claude-3-5-sonnet-20241022)
+  // - claude-{major}-{type}-{date} (e.g., claude-3-opus-20240229)
+  // - claude-{version}-{type}-latest (e.g., claude-3-5-sonnet-latest)
+
+  // Pattern 1: claude-{type}-{version}-{date} (Claude 4+ format)
+  // e.g., claude-sonnet-4-5-20250929, claude-opus-4-20250514
+  const pattern1 = modelName.match(/^claude-(sonnet|opus|haiku)-\d+(-\d+)?-\d{8}$/);
+  if (pattern1) {
+    const type = pattern1[1];
+    if (type === 'opus') return 'claude-opus-4-5-thinking';
+    return 'claude-sonnet-4-5';
+  }
+
+  // Pattern 2: claude-{major}-{minor}-{type}-{date} (Claude 3.x format)
+  // e.g., claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+  const pattern2 = modelName.match(/^claude-\d+-\d+-(sonnet|opus|haiku)-\d{8}$/);
+  if (pattern2) {
+    const type = pattern2[1];
+    if (type === 'opus') return 'claude-opus-4-5-thinking';
+    return 'claude-sonnet-4-5';
+  }
+
+  // Pattern 3: claude-{major}-{type}-{date} (Claude 3 format)
+  // e.g., claude-3-opus-20240229, claude-3-sonnet-20240229
+  const pattern3 = modelName.match(/^claude-\d+-(sonnet|opus|haiku)-\d{8}$/);
+  if (pattern3) {
+    const type = pattern3[1];
+    if (type === 'opus') return 'claude-opus-4-5-thinking';
+    return 'claude-sonnet-4-5';
+  }
+
+  // Pattern 4: claude-{version}-{type}-latest
+  // e.g., claude-3-5-sonnet-latest, claude-3-opus-latest
+  const pattern4 = modelName.match(/^claude-(\d+-)?(.+)-latest$/);
+  if (pattern4) {
+    const remainder = pattern4[2];
+    if (remainder.includes('opus')) return 'claude-opus-4-5-thinking';
+    return 'claude-sonnet-4-5';
+  }
+
+  // Original logic (kept for backward compatibility)
   if (modelName === 'claude-sonnet-4-5-thinking') return 'claude-sonnet-4-5';
   if (modelName === 'claude-opus-4-5') return 'claude-opus-4-5-thinking';
   if (modelName === 'gemini-2.5-flash-thinking') return 'gemini-2.5-flash';
@@ -65,6 +111,7 @@ export function modelMapping(modelName) {
 export function isEnableThinking(modelName) {
   return modelName.includes('-thinking') ||
     modelName === 'gemini-2.5-pro' ||
+    modelName === 'gemini-3-flash' ||
     modelName.startsWith('gemini-3-pro-') ||
     modelName === 'rev19-uic3-1p' ||
     modelName === 'gpt-oss-120b-medium';
@@ -89,10 +136,10 @@ export function generateGenerationConfig(parameters, enableThinking, actualModel
 
   // 使用统一的参数转换函数
   const generationConfig = toGenerationConfig(normalizedParams, enableThinking, actualModelName);
-
+  
   // 添加 stopSequences
   generationConfig.stopSequences = DEFAULT_STOP_SEQUENCES;
-
+  
   return generationConfig;
 }
 
@@ -107,8 +154,8 @@ export function extractSystemInstruction(openaiMessages) {
       const content = typeof message.content === 'string'
         ? message.content
         : (Array.isArray(message.content)
-          ? message.content.filter(item => item.type === 'text').map(item => item.text).join('')
-          : '');
+            ? message.content.filter(item => item.type === 'text').map(item => item.text).join('')
+            : '');
       if (content.trim()) systemTexts.push(content.trim());
     } else {
       break;
@@ -125,17 +172,17 @@ export function extractSystemInstruction(openaiMessages) {
 export function prepareImageRequest(requestBody) {
   if (!requestBody || !requestBody.request) return requestBody;
   let imageSize = "1K";
-  if (requestBody.model.includes('4K')) {
+  if (requestBody.model.includes('4K')){
     imageSize = "4K";
-  } else if (requestBody.model.includes('2K')) {
+  } else if (requestBody.model.includes('2K')){
     imageSize = "2K";
   } else {
     imageSize = "1K";
   }
-  if (imageSize !== "1K") {
+  if (imageSize !== "1K"){
     requestBody.model = requestBody.model.slice(0, -3);
   }
-  requestBody.request.generationConfig = {
+  requestBody.request.generationConfig = { 
     candidateCount: 1,
     imageConfig: {
       imageSize: imageSize
@@ -146,90 +193,6 @@ export function prepareImageRequest(requestBody) {
   delete requestBody.request.tools;
   delete requestBody.request.toolConfig;
   return requestBody;
-}
-
-// ==================== 资源获取工具 (带缓存) ====================
-const resourceCache = new Map();
-const CACHE_LIMIT = 20; // 降低缓存数量限制，防止内存暴涨 (100张图可能占用几百MB)
-
-function getFromCache(url) {
-  if (resourceCache.has(url)) {
-    console.log(`[DEBUG] Cache hit: ${url}`);
-    // Refresh LRU position
-    const data = resourceCache.get(url);
-    resourceCache.delete(url);
-    resourceCache.set(url, data);
-    return data;
-  }
-  return null;
-}
-
-function addToCache(url, data) {
-  if (resourceCache.size >= CACHE_LIMIT) {
-    // Remove oldest (first inserted)
-    const oldestKey = resourceCache.keys().next().value;
-    resourceCache.delete(oldestKey);
-  }
-  resourceCache.set(url, data);
-}
-
-export async function fetchText(url) {
-  const cached = getFromCache(url);
-  if (cached) return cached;
-
-  try {
-    console.log(`[DEBUG] ${new Date().toISOString()} fetchText start: ${url}`);
-
-    let lastError;
-    for (let i = 0; i < 3; i++) {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const text = await response.text();
-        console.log(`[DEBUG] ${new Date().toISOString()} fetchText success, length: ${text.length}`);
-        addToCache(url, text);
-        return text;
-      } catch (err) {
-        lastError = err;
-        console.warn(`[WARN] ${new Date().toISOString()} fetchText attempt ${i + 1} failed: ${err.message}`);
-        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-      }
-    }
-    throw lastError;
-  } catch (error) {
-    console.error(`[ERROR] ${new Date().toISOString()} 下载文本失败 ${url} (Retry exhausted):`, error);
-    return null;
-  }
-}
-
-export async function fetchImageBase64(url) {
-  const cached = getFromCache(url);
-  if (cached) return cached;
-
-  try {
-    console.log(`[DEBUG] ${new Date().toISOString()} fetchImageBase64 start: ${url}`);
-
-    let lastError;
-    for (let i = 0; i < 3; i++) {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString('base64');
-        console.log(`[DEBUG] ${new Date().toISOString()} fetchImageBase64 success, base64 length: ${base64.length}`);
-        addToCache(url, base64);
-        return base64;
-      } catch (err) {
-        lastError = err;
-        console.warn(`[WARN] ${new Date().toISOString()} fetchImageBase64 attempt ${i + 1} failed: ${err.message}`);
-        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-      }
-    }
-    throw lastError;
-  } catch (error) {
-    console.error(`[ERROR] ${new Date().toISOString()} 下载图片失败 ${url} (Retry exhausted):`, error);
-    return null;
-  }
 }
 
 // ==================== 其他工具 ====================

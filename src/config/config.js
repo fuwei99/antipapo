@@ -13,7 +13,8 @@ import {
   DEFAULT_MAX_REQUEST_SIZE,
   DEFAULT_MAX_IMAGES,
   MODEL_LIST_CACHE_TTL,
-  DEFAULT_GENERATION_PARAMS
+  DEFAULT_GENERATION_PARAMS,
+  MEMORY_CLEANUP_INTERVAL
 } from '../constants/index.js';
 
 // 生成随机凭据的缓存
@@ -27,12 +28,12 @@ function getAdminCredentials() {
   const username = process.env.ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
   const jwtSecret = process.env.JWT_SECRET;
-
+  
   // 如果全部配置了，直接返回
   if (username && password && jwtSecret) {
     return { username, password, jwtSecret };
   }
-
+  
   // 生成随机凭据（只生成一次）
   if (!generatedCredentials) {
     generatedCredentials = {
@@ -40,7 +41,7 @@ function getAdminCredentials() {
       password: password || crypto.randomBytes(16).toString('base64').replace(/[+/=]/g, ''),
       jwtSecret: jwtSecret || crypto.randomBytes(32).toString('hex')
     };
-
+    
     // 显示生成的凭据
     if (!username || !password) {
       log.warn('═══════════════════════════════════════════════════════════');
@@ -57,7 +58,7 @@ function getAdminCredentials() {
       log.warn('⚠️ 未配置 JWT_SECRET，已生成随机密钥（重启后登录会话将失效）');
     }
   }
-
+  
   return generatedCredentials;
 }
 
@@ -99,19 +100,19 @@ export function getProxyConfig() {
   if (process.env.PROXY) {
     return process.env.PROXY;
   }
-
+  
   // 检查系统代理环境变量（按优先级）
   const systemProxy = process.env.HTTPS_PROXY ||
-    process.env.https_proxy ||
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.ALL_PROXY ||
-    process.env.all_proxy;
-
+                      process.env.https_proxy ||
+                      process.env.HTTP_PROXY ||
+                      process.env.http_proxy ||
+                      process.env.ALL_PROXY ||
+                      process.env.all_proxy;
+  
   if (systemProxy) {
     log.info(`使用系统代理: ${systemProxy}`);
   }
-
+  
   return systemProxy || null;
 }
 
@@ -126,7 +127,8 @@ export function buildConfig(jsonConfig) {
       port: jsonConfig.server?.port || DEFAULT_SERVER_PORT,
       host: jsonConfig.server?.host || DEFAULT_SERVER_HOST,
       heartbeatInterval: jsonConfig.server?.heartbeatInterval || DEFAULT_HEARTBEAT_INTERVAL,
-      memoryThreshold: jsonConfig.server?.memoryThreshold || 100
+      // 内存定时清理频率：避免频繁扫描/GC 带来的性能损耗
+      memoryCleanupInterval: jsonConfig.server?.memoryCleanupInterval ?? MEMORY_CLEANUP_INTERVAL
     },
     cache: {
       modelListTTL: jsonConfig.cache?.modelListTTL || MODEL_LIST_CACHE_TTL
@@ -163,10 +165,16 @@ export function buildConfig(jsonConfig) {
     systemInstruction: process.env.SYSTEM_INSTRUCTION || '',
     skipProjectIdFetch: jsonConfig.other?.skipProjectIdFetch === true,
     useContextSystemPrompt: jsonConfig.other?.useContextSystemPrompt === true,
-    skipProjectIdFetch: jsonConfig.other?.skipProjectIdFetch === true,
-    useContextSystemPrompt: jsonConfig.other?.useContextSystemPrompt === true,
     passSignatureToClient: jsonConfig.other?.passSignatureToClient === true,
-    r2: jsonConfig.r2 || { enabled: false }
+    useFallbackSignature: jsonConfig.other?.useFallbackSignature !== false,
+    useCachedSignature: jsonConfig.other?.useCachedSignature !== false,
+    cacheOnlyToolSignatures: jsonConfig.other?.cacheOnlyToolSignatures === true ||
+      process.env.CACHE_ONLY_TOOL_SIGNATURES === '1' ||
+      process.env.CACHE_ONLY_TOOL_SIGNATURES === 'true',
+    // 调试：完整打印最终请求体与原始响应（可能包含敏感内容/大体积数据）
+    debugDumpRequestResponse:
+      jsonConfig.other?.debugDumpRequestResponse === true ||
+      process.env.DEBUG_DUMP_REQUEST_RESPONSE === '1'
   };
 }
 

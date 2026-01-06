@@ -11,7 +11,6 @@ import logger from '../utils/logger.js';
 import config from '../config/config.js';
 import memoryManager from '../utils/memoryManager.js';
 import { getPublicDir, getRelativePath } from '../utils/paths.js';
-import { MEMORY_CHECK_INTERVAL } from '../constants/index.js';
 import { errorHandler } from '../utils/errors.js';
 import { getChunkPoolSize, clearChunkPool } from './stream.js';
 
@@ -29,8 +28,7 @@ logger.info(`静态文件目录: ${getRelativePath(publicDir)}`);
 const app = express();
 
 // ==================== 内存管理 ====================
-memoryManager.setThreshold(config.server.memoryThreshold);
-memoryManager.start(MEMORY_CHECK_INTERVAL);
+memoryManager.start(config.server.memoryCleanupInterval);
 
 // ==================== 基础中间件 ====================
 app.use(cors());
@@ -115,7 +113,6 @@ app.get('/v1/memory', (req, res) => {
     rss: usage.rss,
     external: usage.external,
     arrayBuffers: usage.arrayBuffers,
-    pressure: memoryManager.getCurrentPressure(),
     poolSizes: memoryManager.getPoolSizes(),
     chunkPoolSize: getChunkPoolSize()
   });

@@ -56,7 +56,7 @@ async function loadConfig() {
                 if (form.elements['HOST']) form.elements['HOST'].value = json.server.host || '';
                 if (form.elements['MAX_REQUEST_SIZE']) form.elements['MAX_REQUEST_SIZE'].value = json.server.maxRequestSize || '';
                 if (form.elements['HEARTBEAT_INTERVAL']) form.elements['HEARTBEAT_INTERVAL'].value = json.server.heartbeatInterval || '';
-                if (form.elements['MEMORY_THRESHOLD']) form.elements['MEMORY_THRESHOLD'].value = json.server.memoryThreshold || '';
+                if (form.elements['MEMORY_CLEANUP_INTERVAL']) form.elements['MEMORY_CLEANUP_INTERVAL'].value = json.server.memoryCleanupInterval || '';
             }
             if (json.defaults) {
                 if (form.elements['DEFAULT_TEMPERATURE']) form.elements['DEFAULT_TEMPERATURE'].value = json.defaults.temperature ?? '';
@@ -72,6 +72,9 @@ async function loadConfig() {
                 if (form.elements['USE_NATIVE_AXIOS']) form.elements['USE_NATIVE_AXIOS'].checked = json.other.useNativeAxios !== false;
                 if (form.elements['USE_CONTEXT_SYSTEM_PROMPT']) form.elements['USE_CONTEXT_SYSTEM_PROMPT'].checked = json.other.useContextSystemPrompt || false;
                 if (form.elements['PASS_SIGNATURE_TO_CLIENT']) form.elements['PASS_SIGNATURE_TO_CLIENT'].checked = json.other.passSignatureToClient || false;
+                if (form.elements['USE_CACHED_SIGNATURE']) form.elements['USE_CACHED_SIGNATURE'].checked = json.other.useCachedSignature !== false;
+                if (form.elements['USE_FALLBACK_SIGNATURE']) form.elements['USE_FALLBACK_SIGNATURE'].checked = json.other.useFallbackSignature !== false;
+                if (form.elements['CACHE_ONLY_TOOL_SIGNATURES']) form.elements['CACHE_ONLY_TOOL_SIGNATURES'].checked = json.other.cacheOnlyToolSignatures || false;
             }
             if (json.rotation) {
                 if (form.elements['ROTATION_STRATEGY']) {
@@ -84,10 +87,64 @@ async function loadConfig() {
             }
             
             loadRotationStatus();
+            // 默认只显示当前激活的设置分区（便于后续扩展）
+            if (typeof setActiveSettingSection === 'function') {
+                setActiveSettingSection(activeSettingSectionId, false);
+            }
         }
     } catch (error) {
         showToast('加载配置失败: ' + error.message, 'error');
     }
+}
+
+let activeSettingSectionId = localStorage.getItem('activeSettingSectionId') || 'section-server';
+
+function setActiveSettingSection(id, scroll = true) {
+    const nextId = id || 'section-server';
+    activeSettingSectionId = nextId;
+    localStorage.setItem('activeSettingSectionId', activeSettingSectionId);
+    
+    // 清理搜索状态，避免“只显示一个分区”和“搜索过滤”互相干扰
+    const searchInput = document.getElementById('settingsSearch');
+    if (searchInput && searchInput.value) {
+        searchInput.value = '';
+    }
+    
+    const sections = document.querySelectorAll('#settingsPage .config-section');
+    sections.forEach(section => {
+        section.style.display = section.id === activeSettingSectionId ? '' : 'none';
+    });
+    
+    document.querySelectorAll('.settings-nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.target === activeSettingSectionId);
+    });
+    
+    const select = document.getElementById('settingsSectionSelect');
+    if (select) select.value = activeSettingSectionId;
+    
+    if (scroll) {
+        const el = document.getElementById(activeSettingSectionId);
+        const container = document.getElementById('settingsPage');
+        if (el && container) {
+            // 计算元素相对于容器的位置
+            const elTop = el.offsetTop;
+            // 滚动容器而不是整个页面
+            container.scrollTo({ top: elTop - 10, behavior: 'smooth' });
+        }
+    }
+}
+
+function filterSettings(query) {
+    const q = (query || '').trim().toLowerCase();
+    const sections = document.querySelectorAll('#settingsPage .config-section');
+    if (!q) {
+        setActiveSettingSection(activeSettingSectionId, false);
+        return;
+    }
+    sections.forEach(section => {
+        const text = (section.innerText || '').toLowerCase();
+        section.style.display = text.includes(q) ? '' : 'none';
+    });
 }
 
 async function saveConfig(e) {
@@ -111,6 +168,9 @@ async function saveConfig(e) {
     jsonConfig.other.useNativeAxios = form.elements['USE_NATIVE_AXIOS']?.checked || false;
     jsonConfig.other.useContextSystemPrompt = form.elements['USE_CONTEXT_SYSTEM_PROMPT']?.checked || false;
     jsonConfig.other.passSignatureToClient = form.elements['PASS_SIGNATURE_TO_CLIENT']?.checked || false;
+    jsonConfig.other.useCachedSignature = form.elements['USE_CACHED_SIGNATURE']?.checked ?? true;
+    jsonConfig.other.useFallbackSignature = form.elements['USE_FALLBACK_SIGNATURE']?.checked ?? true;
+    jsonConfig.other.cacheOnlyToolSignatures = form.elements['CACHE_ONLY_TOOL_SIGNATURES']?.checked || false;
     
     Object.entries(allConfig).forEach(([key, value]) => {
         if (sensitiveKeys.includes(key)) {
@@ -120,7 +180,7 @@ async function saveConfig(e) {
             else if (key === 'HOST') jsonConfig.server.host = value || undefined;
             else if (key === 'MAX_REQUEST_SIZE') jsonConfig.server.maxRequestSize = value || undefined;
             else if (key === 'HEARTBEAT_INTERVAL') jsonConfig.server.heartbeatInterval = parseInt(value) || undefined;
-            else if (key === 'MEMORY_THRESHOLD') jsonConfig.server.memoryThreshold = parseInt(value) || undefined;
+            else if (key === 'MEMORY_CLEANUP_INTERVAL') jsonConfig.server.memoryCleanupInterval = parseInt(value) || undefined;
             else if (key === 'DEFAULT_TEMPERATURE') jsonConfig.defaults.temperature = parseFloat(value) || undefined;
             else if (key === 'DEFAULT_TOP_P') jsonConfig.defaults.topP = parseFloat(value) || undefined;
             else if (key === 'DEFAULT_TOP_K') jsonConfig.defaults.topK = parseInt(value) || undefined;
@@ -134,7 +194,7 @@ async function saveConfig(e) {
                 const num = parseInt(value);
                 jsonConfig.other.retryTimes = Number.isNaN(num) ? undefined : num;
             }
-            else if (key === 'SKIP_PROJECT_ID_FETCH' || key === 'USE_NATIVE_AXIOS' || key === 'USE_CONTEXT_SYSTEM_PROMPT' || key === 'PASS_SIGNATURE_TO_CLIENT') {
+            else if (key === 'SKIP_PROJECT_ID_FETCH' || key === 'USE_NATIVE_AXIOS' || key === 'USE_CONTEXT_SYSTEM_PROMPT' || key === 'PASS_SIGNATURE_TO_CLIENT' || key === 'USE_CACHED_SIGNATURE' || key === 'USE_FALLBACK_SIGNATURE' || key === 'CACHE_ONLY_TOOL_SIGNATURES') {
                 // 跳过，已在上面处理
             }
             else if (key === 'ROTATION_STRATEGY') jsonConfig.rotation.strategy = value || undefined;
@@ -190,3 +250,10 @@ async function saveConfig(e) {
         showToast('保存失败: ' + error.message, 'error');
     }
 }
+
+// 页面初始化：默认只显示一个设置分区
+document.addEventListener('DOMContentLoaded', () => {
+    if (typeof setActiveSettingSection === 'function') {
+        setActiveSettingSection(activeSettingSectionId, false);
+    }
+});
